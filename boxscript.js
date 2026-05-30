@@ -1,21 +1,134 @@
+// Map of valid combinations where images exist in BOTH boximg/ and plainimages/
+const availableCombinations = {
+    ringbox: {
+        magnetic: ["black", "brown", "golden", "green", "maroon"],
+    },
+    banglebox: {
+        magnetic: ["black", "brown", "golden", "green", "maroon"],
+    },
+    earringbox: {
+        magnetic: ["black", "brown", "golden", "green", "maroon"],
+    },
+    pendantbox: {
+        magnetic: ["brown", "golden", "green", "maroon"],
+        "top-bottom": ["black", "brown", "golden", "green", "maroon", "mauve", "pink"],
+    },
+};
+
+// Display names for dropdown labels
+const boxTypeLabels = {
+    ringbox: "Ring Box",
+    banglebox: "Bangle Box",
+    earringbox: "Earring Box",
+    pendantbox: "Pendant Box",
+};
+
+const boxStyleLabels = {
+    "top-bottom": "Top-Bottom",
+    magnetic: "Magnetic",
+    slidingbox: "Sliding Box",
+};
+
+const boxColorLabels = {
+    black: "Black",
+    blue: "Blue",
+    boccumblue: "Boccum Blue",
+    brown: "Brown",
+    golden: "Golden",
+    green: "Green",
+    grey: "Grey",
+    lightpink: "Light Pink",
+    maroon: "Maroon",
+    mauve: "Mauve",
+    mintgreen: "Mint Green",
+    orange: "Orange",
+    pink: "Pink",
+    red: "Red",
+    white: "White",
+};
+
+// Populate Box Type dropdown on page load
+const boxTypeSelect = document.getElementById('boxType');
+const boxStyleSelect = document.getElementById('boxStyle');
+const boxColorSelect = document.getElementById('boxColor');
+
+Object.keys(availableCombinations).forEach(function (type) {
+    const option = document.createElement('option');
+    option.value = type;
+    option.textContent = boxTypeLabels[type] || type;
+    boxTypeSelect.appendChild(option);
+});
+
+// When Box Type changes, populate Box Style
+boxTypeSelect.addEventListener('change', function () {
+    boxStyleSelect.innerHTML = '<option value="">--Select--</option>';
+    boxColorSelect.innerHTML = '<option value="">--Select Box Style First--</option>';
+    boxColorSelect.disabled = true;
+
+    const selectedType = this.value;
+    if (!selectedType || !availableCombinations[selectedType]) {
+        boxStyleSelect.disabled = true;
+        return;
+    }
+
+    boxStyleSelect.disabled = false;
+    Object.keys(availableCombinations[selectedType]).forEach(function (style) {
+        const option = document.createElement('option');
+        option.value = style;
+        option.textContent = boxStyleLabels[style] || style;
+        boxStyleSelect.appendChild(option);
+    });
+});
+
+// When Box Style changes, populate Box Color
+boxStyleSelect.addEventListener('change', function () {
+    boxColorSelect.innerHTML = '<option value="">--Select--</option>';
+
+    const selectedType = boxTypeSelect.value;
+    const selectedStyle = this.value;
+    if (!selectedType || !selectedStyle || !availableCombinations[selectedType] || !availableCombinations[selectedType][selectedStyle]) {
+        boxColorSelect.disabled = true;
+        return;
+    }
+
+    boxColorSelect.disabled = false;
+    availableCombinations[selectedType][selectedStyle].forEach(function (color) {
+        const option = document.createElement('option');
+        option.value = color;
+        option.textContent = boxColorLabels[color] || color;
+        boxColorSelect.appendChild(option);
+    });
+});
+
 document.getElementById('generateBtn').addEventListener('click', function () {
 
-
-    const boxType = document.getElementById('boxType').value;
-    const boxStyle = document.getElementById('boxStyle').value;
-    const boxColor = document.getElementById('boxColor').value;
+    const boxType = boxTypeSelect.value;
+    const boxStyle = boxStyleSelect.value;
+    const boxColor = boxColorSelect.value;
     const printingColor = document.getElementById('printingColor').value;
     const logoInput = document.getElementById('logo').files[0];
 
+    if (!boxType) {
+        alert("Please select a box type.");
+        return;
+    }
+    if (!boxStyle) {
+        alert("Please select a box style.");
+        return;
+    }
+    if (!boxColor) {
+        alert("Please select a box color.");
+        return;
+    }
     if (!logoInput) {
         alert("Please upload a logo.");
         return;
     }
-
     if (!printingColor) {
         alert("Please select a printing color.");
         return;
     }
+
     const imageContainer = document.getElementById('imgcontains');
     const downloadbutton = document.getElementById('downloadArea');
 
@@ -106,7 +219,6 @@ document.getElementById('generateBtn').addEventListener('click', function () {
 document.getElementById('resetBtn').addEventListener('click', resetForm);
 
 function resetForm() {
- 
     location.reload();
 }
 
@@ -118,8 +230,7 @@ function showErrorModal(message) {
     });
     setTimeout(function(){
         resetForm();
-    },2000); 
-   
+    },2000);
 }
 
 function downloadImage(canvas, exportWidth, exportHeight, filename, multiplier = 1) {
@@ -135,7 +246,7 @@ function downloadImage(canvas, exportWidth, exportHeight, filename, multiplier =
     successmsg();
     setTimeout(function(){
         resetForm();
-    },2000); 
+    },2000);
 }
 
 function successmsg() {
@@ -150,7 +261,6 @@ function successmsg() {
 
 function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
     if (printingColor.toLowerCase() === 'none') {
-        // Add original logo without recoloring
         fabric.Image.fromURL(logoImg.src, function (logoFabricImg) {
             logoFabricImg.scaleToWidth(50);
             logoFabricImg.set({
