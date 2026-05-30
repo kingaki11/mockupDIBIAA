@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Box Customization Form</title>
+    <link rel="stylesheet" href="boxstyles.css">
+    <link href="
+    https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.min.css
+    " rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <div class="form-container">
+            <h1>Customize Your Box</h1>
+            <form id="boxForm">
+                <label for="boxType">Box Type</label>
+                <select id="boxType" name="boxType">
+                    <option value="">--Select--</option>
+                    <option value="ringbox">Ring Box</option>
+                    <!-- <option value="backdrop">Backdrop</option> -->
+                    <option value="banglebox">Bangle Box</option>
+                    <!-- <option value="bangleboxtray">Bangle box tray</option>
+                    <option value="bigchainboxtray">Big chain box tray</option>
+                    <option value="bigcoinbox">Big coin box</option> -->
+                    <option value="bignecklacebox">Big necklace box</option>
+                    <!-- <option value="brochure">Brochure</option>
+                    <option value="butterpaper">Butter Paper</option>
+                    <option value="cards">Cards</option>
+                    <option value="catalog">Catalog</option>
+                    <option value="certificate">Certificate</option> -->
+                    <option value="chainbox">Chain box</option>
+                    <!-- <option value="chocolatebox">Chocolate Box</option>
+                    <option value="corrugatedbox">Corrugated Box</option> -->
+                    <option value="earringbox">Earring box</option>
+                    <!-- <option value="earringboxtray">Earring Box Tray</option>
+                    <option value="economicbanglebox">Economic Bangle Box</option>
+                    <option value="economicbangleboxtray">Economic Bangle Box Tray</option>
+                    <option value="economicchainbox">Economic Chain Box</option>
+                    <option value="economicearringbox">Economic Earring Box</option>
+                    <option value="economicearringboxtray">Economic Earring Box Tray</option>
+                    <option value="economicnecklacebox">Economic Necklace Box</option>
+                    <option value="economicringbox">Economic Ring Box</option>
+                    <option value="economicringboxtray">Economic Ring Box Tray</option>
+                    <option value="economicchainboxtray">Economy Chain Box Tray</option>
+                    <option value="economicmultibrownbox">Economy Multipurpose Brown Box</option>
+                    <option value="flex">Flex</option>
+                    <option value="flyers">Flyers</option>
+                    <option value="foam">Foam</option>
+                    <option value="gifthamperbox">Gift Hamper Box</option>
+                    <option value="harambox">Haram Box</option>
+                    <option value="hooks">Hooks</option>
+                    <option value="innertray">Inner Tray</option>
+                    <option value="label">Label</option>
+                    <option value="letterhead">Letter Head</option>
+                    <option value="lids">Lids</option>
+                    <option value="mailerbox">Mailer Box</option>
+                    <option value="multipurposebox">Multipurpose Box</option>
+                    <option value="multiboxtray">Multipurpose Box Tray</option>
+                    <option value="newcorrugatedrigidbox">New Corrugated Rigid Gift Box</option>
+                    <option value="paperbag">Paper Bag</option>
+                    <option value="paperbox">Paper Box</option> -->
+                    <option value="pendantbox">Pendant Box</option>
+                    <!-- <option value="pendantboxtray">Pendant Box Tray</option>
+                    <option value="poster">Poster</option>
+                    <option value="pouch">Pouch</option>
+                    <option value="premiumbanglebox">Premium Bangle Box</option>
+                    <option value="premiumpaperbag">Premium Paper Bag</option>
+                    <option value="pvcpad">PVC Pad</option>
+                    <option value="questionpaper">Question Paper</option>
+                    <option value="raanihaar">Raani Haar</option>
+                    <option value="rakhibox">Rakhi Box</option>
+                    <option value="rakhibox4x4x1inch">Rakhi Box - 4 X 4 X 1 Inches</option>
+                    <option value="rakhibox8x2x1inch">Rakhi Box - 8 X 2 X 1 Inches</option>
+                    <option value="rigidbox">Rigid Box</option>
+                    <option value="ringtray">Ring Box Tray</option> -->
+                    <option value="smallchainbox">Small Chain Box</option>
+                    <!-- <option value="smallchainboxtray">Small Chain Box Tray</option> -->
+                    <!-- <option value="smallcoinbox">Small Coin Box</option> -->
+                    <!-- <option value="smallnecklacebox">Small Necklace Box</option> -->
+                    <!-- <option value="smallnecklaceboxtray">Small Necklace Box Tray</option>
+                    <option value="standee">Standee</option>
+                    <option value="standbanglebox">Standing Bangle Box</option>
+                    <option value="standbangleboxtray">Standing Bangle Box Tray</option> -->
+                </select>
+
+                <label for="boxStyle">Box Style</label>
+                <select id="boxStyle" name="boxStyle">
+                    <option value="">--Select--</option>
+                    <option value="top-bottom">Top-Bottom</option>
+                    <!-- <option value="4cavity">4 Cavity</option>
+                    <option value="6cavity">6 Cavity</option>
+                    <option value="biggifthamperbox">Big Gift Hamper Box</option>
+                    <option value="bigpaperbag">Big Paper Bag</option>
+                    <option value="design1hand">Design 1 - Hand</option>
+                    <option value="design1yellowboy">Design 2 - Yellow Boy</option>
+                    <option value="design1greenboy">Design 3 - Green Boy</option>
+                    <option value="largepremiumpaperbag">Large Premium Paper Bag</option> -->
+                    <option value="magnetic">Magnetic</option>
+                    <!-- <option value="mediumpremiumpaperbag">Medium Premium Paper Bag</option> -->
+                    <option value="slidingbox">Sliding Box</option>
+                    <!-- <option value="smallgifthamperbox">Small Gift Hamper Box</option>
+                    <option value="smallpaperbag">Small Paper Bag</option>
+                    <option value="smallpremiumpaperbag">Small Premium Paper Bag</option> -->
+                </select>
+
+                <label for="boxColor">Box Color</label>
+                <select id="boxColor" name="boxColor">
+                    <option value="">--Select--</option>
+                    <option value="blue">Blue</option>
+                    <option value="lightpink">Light Pink</option>
+                    <!-- <option value="black">Black</option> -->
+
+
+                    <option value="boccumblue">Boccum Blue</option>
+                    <option value="brown">Brown</option>
+
+                    <!-- <option value="colombocream">Colombo Cream</option> -->
+                    <!-- <option value="craftbrownpaper">Craft Brown Paper</option> -->
+
+                    <!-- <option value="cream">Cream</option> -->
+
+                    <!-- <option value="darkbrown">Dark Brown</option> -->
+
+                    <!-- <option value="goldenmetallic">Golden Metallic</option>  -->
+                    <!-- <option value="goldenyellow">Golden Yellow</option>  -->
+                    <option value="green">Green</option>
+                    <!-- <option value="greenmetallic">Green Metallic</option> -->
+
+                    <option value="grey">Grey</option>
+                    <option value="maroon">Maroon</option>
+                    <option value="mauve">Mauve</option>
+                    <option value="mintgreen">Mint Green</option>
+                    <option value="orange">Orange</option>
+                    <option value="pink">Pink</option>
+                    <!-- <option value="pinkmetallic">Pink Metallic</option> -->
+                    <option value="red">Red</option>
+                    <!-- <option value="rosepink">Rose Pink</option> -->
+                    <!-- <option value="silvermetallic">Silver Metallic</option> -->
+                    <option value="white">White</option>
+                    <!-- <option value="white Metallic">White Metallic</option> -->
+                    <!-- <option value="wine">Wine</option> -->
+                </select>
+
+                <label for="printingColor">Printing Color</label>
+                <select id="printingColor" name="printingColor">
+                    <option value="">--Select--</option>
+                    <option value="None">None</option>
+                    <option value="Black">Black</option>
+                    <option value="Blue">Blue</option>
+                    <option value="Brown">Brown</option>
+                    <!-- <option value="Burgundy">Burgundy</option> -->
+                    <!-- <option value="Copper">Copper</option> -->
+                    <!-- <option value="Darkpink">Dark Pink</option> -->
+                    <!-- <option value="Dualcolor">Dual Color</option> -->
+                    <option value="Golden">Golden</option>
+                    <option value="Green">Green</option>
+                    <option value="Grey">Grey</option>
+                    <!-- <option value="Lightbrown">Light Brown</option> -->
+                    <option value="Magenta">Magenta</option>
+                    <option value="Maroon">Maroon</option>
+                    <!-- <option value="Mauve">Mauve</option> -->
+                    <!-- <option value="Multicolor">Multi Colour</option> -->
+                    <!-- <option value="No">No</option> -->
+                    <option value="Orange">Orange</option>
+                    <option value="Pink">Pink</option>
+                    <!-- <option value="Pinksilver">Pink + Silver</option> -->
+                    <option value="Purple">Purple</option>
+                    <option value="Red">Red</option>
+                    <!-- <option value="Rosegold">Rose Gold</option> -->
+                    <option value="Silver">Silver</option>
+                    <option value="White">White</option>
+                    <option value="Yellow">Yellow</option>
+                </select>
+
+                <label for="logo">Upload Logo</label>
+                <input type="file" id="logo" name="logo" accept="image/png, image/svg+xml">
+                <div class="mybuttons">
+                    <button type="button" id="generateBtn" class="generatebutton">Generate</button>
+
+                    <button type="button" id="resetBtn">Reset</button>
+                </div>
+
+            </form>
+
+
+
+        </div>
+        <div class="images-container" id="imgcontains">
+            <div class="image-box">
+                <h2>Box</h2>
+                <canvas id="previewCanvas1" class="canvas-preview"></canvas>
+            </div>
+            <div class="image-box">
+                <h2>Die</h2>
+                <canvas id="previewCanvas2" class="canvas-preview"></canvas>
+            </div>
+            <div id="downloadArea" style="display: none;">
+                <button id="downloadBoth" class="download-button">Download Both Images</button>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.5.0/fabric.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.all.min.js"></script>
+    <script src="boxscript.js"></script>
+</body>
+
+</html>
