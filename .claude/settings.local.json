@@ -10,7 +10,10 @@
       "Bash(git commit:*)",
       "Bash(gh repo:*)",
       "Bash(git mv:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(py --version)",
+      "Bash(py:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
