@@ -15,7 +15,6 @@ const availableCombinations = {
     },
 };
 
-// Display names for dropdown labels
 const boxTypeLabels = {
     ringbox: "Ring Box",
     banglebox: "Bangle Box",
@@ -46,6 +45,69 @@ const boxColorLabels = {
     red: "Red",
     white: "White",
 };
+
+// Holds the background-removed logo PNG data URL after upload
+let processedLogoUrl = null;
+// Holds fabric canvas references after generation, for download
+let generatedCanvas1 = null;
+let generatedCanvas2 = null;
+let generatedCanvas2Dims = { width: 300, height: 300 };
+
+// Removes the white/light background from a logo image using BFS flood-fill from edges.
+// Only removes pixels connected to the border that are near-white (tolerance 40/255 per channel).
+function removeBackground(img) {
+    const tempCanvas = document.createElement('canvas');
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    const ctx = tempCanvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+    const visited = new Uint8Array(w * h);
+    const queue = [];
+    let head = 0;
+    const TOLERANCE = 40;
+
+    function isBackground(pi) {
+        if (data[pi + 3] < 128) return true;
+        return data[pi] > 255 - TOLERANCE && data[pi + 1] > 255 - TOLERANCE && data[pi + 2] > 255 - TOLERANCE;
+    }
+
+    function enqueue(pos) {
+        if (!visited[pos]) {
+            visited[pos] = 1;
+            queue.push(pos);
+        }
+    }
+
+    // Seed BFS from all border pixels
+    for (let x = 0; x < w; x++) {
+        enqueue(x);
+        enqueue((h - 1) * w + x);
+    }
+    for (let y = 1; y < h - 1; y++) {
+        enqueue(y * w);
+        enqueue(y * w + w - 1);
+    }
+
+    while (head < queue.length) {
+        const pos = queue[head++];
+        if (!isBackground(pos * 4)) continue;
+        data[pos * 4 + 3] = 0;
+        const x = pos % w;
+        const y = Math.floor(pos / w);
+        if (x > 0) enqueue(pos - 1);
+        if (x < w - 1) enqueue(pos + 1);
+        if (y > 0) enqueue(pos - w);
+        if (y < h - 1) enqueue(pos + w);
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+    return tempCanvas.toDataURL('image/png');
+}
 
 // Populate Box Type dropdown on page load
 const boxTypeSelect = document.getElementById('boxType');
@@ -100,153 +162,181 @@ boxStyleSelect.addEventListener('change', function () {
     });
 });
 
-document.getElementById('generateBtn').addEventListener('click', function () {
+// When a logo file is chosen: validate PNG, remove background, show preview
+document.getElementById('logo').addEventListener('change', function () {
+    const file = this.files[0];
+    const processingHint = document.getElementById('bgProcessingHint');
+    const previewWrap = document.getElementById('logoPreviewWrap');
+    const preview = document.getElementById('logoPreview');
 
+    if (!file) {
+        processedLogoUrl = null;
+        processingHint.style.display = 'none';
+        previewWrap.style.display = 'none';
+        return;
+    }
+
+    if (file.type !== 'image/png') {
+        Swal.fire({ icon: 'error', title: 'Wrong file type', text: 'Please upload a PNG file only.' });
+        this.value = '';
+        processedLogoUrl = null;
+        previewWrap.style.display = 'none';
+        return;
+    }
+
+    processingHint.style.display = 'block';
+    previewWrap.style.display = 'none';
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        const img = new Image();
+        img.onload = function () {
+            processedLogoUrl = removeBackground(img);
+            processingHint.style.display = 'none';
+            preview.src = processedLogoUrl;
+            previewWrap.style.display = 'block';
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+});
+
+document.getElementById('generateBtn').addEventListener('click', function () {
     const boxType = boxTypeSelect.value;
     const boxStyle = boxStyleSelect.value;
     const boxColor = boxColorSelect.value;
     const printingColor = document.getElementById('printingColor').value;
-    const logoInput = document.getElementById('logo').files[0];
 
-    if (!boxType) {
-        alert("Please select a box type.");
-        return;
-    }
-    if (!boxStyle) {
-        alert("Please select a box style.");
-        return;
-    }
-    if (!boxColor) {
-        alert("Please select a box color.");
-        return;
-    }
-    if (!logoInput) {
-        alert("Please upload a logo.");
-        return;
-    }
-    if (!printingColor) {
-        alert("Please select a printing color.");
-        return;
-    }
+    if (!boxType) { alert("Please select a box type."); return; }
+    if (!boxStyle) { alert("Please select a box style."); return; }
+    if (!boxColor) { alert("Please select a box color."); return; }
+    if (!processedLogoUrl) { alert("Please upload a logo."); return; }
+    if (!printingColor) { alert("Please select a printing color."); return; }
 
     const imageContainer = document.getElementById('imgcontains');
-    const downloadbutton = document.getElementById('downloadArea');
+    const downloadArea = document.getElementById('downloadArea');
 
-    // Adjust styles based on viewport width
     if (window.matchMedia("(max-width: 430px)").matches) {
         imageContainer.style.transform = 'translateX(0px)';
         imageContainer.style.width = '100%';
         imageContainer.style.margin = '0 auto';
-        downloadbutton.style.transform = 'translateX(90px) translateY(20px)';
+        downloadArea.style.transform = 'translateX(90px) translateY(20px)';
     } else {
         imageContainer.style.transform = 'translateX(50px)';
-        downloadbutton.style.transform = 'translateX(-610px) translateY(-200px)';
+        downloadArea.style.transform = 'translateX(-610px) translateY(-200px)';
     }
 
-    const reader = new FileReader();
-    reader.onload = function (event) {
-        const logoImg = new Image();
-        logoImg.src = event.target.result;
-        logoImg.onload = function () {
-            const canvas1 = new fabric.Canvas('previewCanvas1', { width: 300, height: 300, backgroundColor: '#fff' });
+    const logoImg = new Image();
+    logoImg.onload = function () {
+        const canvas1 = new fabric.Canvas('previewCanvas1', { width: 300, height: 300, backgroundColor: '#fff' });
+        generatedCanvas1 = canvas1;
 
-            const loadImage = (path, fallbackPath, callback) => {
-                const img = new Image();
-                img.src = path;
-
-                img.onerror = () => {
-                    img.src = fallbackPath;
-                    img.onerror = () => {
-                        showErrorModal();
-                    };
-                };
-
-                img.onload = () => {
-                    callback(img);
-                };
+        const loadImage = (path, fallbackPath, callback) => {
+            const img = new Image();
+            img.src = path;
+            img.onerror = () => {
+                img.src = fallbackPath;
+                img.onerror = () => { showErrorModal(); };
             };
+            img.onload = () => { callback(img); };
+        };
 
-            const boxImagePathPng1 = `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
-            const boxImagePathJpg1 = `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
-            const boxImagePathPng2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
-            const boxImagePathJpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
+        const boxImagePathPng1 = `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
+        const boxImagePathJpg1 = `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
+        const boxImagePathPng2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
+        const boxImagePathJpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
 
-            loadImage(boxImagePathPng1, boxImagePathJpg1, (boxImg1) => {
-                fabric.Image.fromURL(boxImg1.src, function (boxImg1Fabric) {
-                    boxImg1Fabric.scaleToWidth(300);
-                    boxImg1Fabric.scaleToHeight(300);
-                    boxImg1Fabric.selectable = false;
-                    canvas1.add(boxImg1Fabric);
+        loadImage(boxImagePathPng1, boxImagePathJpg1, (boxImg1) => {
+            fabric.Image.fromURL(boxImg1.src, function (boxImg1Fabric) {
+                boxImg1Fabric.scaleToWidth(300);
+                boxImg1Fabric.scaleToHeight(300);
+                boxImg1Fabric.selectable = false;
+                canvas1.add(boxImg1Fabric);
 
-                    loadImage(boxImagePathPng2, boxImagePathJpg2, (boxImg2) => {
-                        const canvas2Width = 300;
-                        const aspectRatio = boxImg2.width / boxImg2.height;
-                        const canvas2Height = canvas2Width / aspectRatio;
+                loadImage(boxImagePathPng2, boxImagePathJpg2, (boxImg2) => {
+                    const canvas2Width = 300;
+                    const aspectRatio = boxImg2.width / boxImg2.height;
+                    const canvas2Height = canvas2Width / aspectRatio;
 
-                        const canvas2 = new fabric.Canvas('previewCanvas2', {
-                            width: canvas2Width,
-                            height: canvas2Height,
-                            backgroundColor: '#fff'
-                        });
+                    const canvas2 = new fabric.Canvas('previewCanvas2', {
+                        width: canvas2Width,
+                        height: canvas2Height,
+                        backgroundColor: '#fff'
+                    });
+                    generatedCanvas2 = canvas2;
+                    generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
 
-                        fabric.Image.fromURL(boxImg2.src, function (boxImg2Fabric) {
-                            const scaleFactor = Math.min(
-                                canvas2Width / boxImg2.width,
-                                canvas2Height / boxImg2.height
-                            );
-                            boxImg2Fabric.scale(scaleFactor);
-                            boxImg2Fabric.selectable = false;
-                            canvas2.add(boxImg2Fabric);
+                    fabric.Image.fromURL(boxImg2.src, function (boxImg2Fabric) {
+                        const scaleFactor = Math.min(
+                            canvas2Width / boxImg2.width,
+                            canvas2Height / boxImg2.height
+                        );
+                        boxImg2Fabric.scale(scaleFactor);
+                        boxImg2Fabric.selectable = false;
+                        canvas2.add(boxImg2Fabric);
 
-                            addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
-                            addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
+                        addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
+                        addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
 
-                            document.getElementById('downloadArea').style.display = 'block';
-
-                            document.getElementById('downloadBoth').addEventListener('click', function () {
-                                downloadImage(canvas1, 1000, 1000, 'image_option_1.png', 3);
-                                downloadImage(canvas2, canvas2Width * 3, canvas2Height * 3, 'image_option_2.png', 3);
-                            });
-                        });
+                        document.getElementById('downloadArea').style.display = 'block';
                     });
                 });
             });
-        };
+        });
     };
-    reader.readAsDataURL(logoInput);
+    logoImg.src = processedLogoUrl;
 });
 
 document.getElementById('resetBtn').addEventListener('click', resetForm);
+
+// PNG download: exports both canvases at 3× resolution
+document.getElementById('downloadPNG').addEventListener('click', function () {
+    if (!generatedCanvas1 || !generatedCanvas2) return;
+    downloadImage(generatedCanvas1, 'box_mockup.png');
+    downloadImage(generatedCanvas2, 'die_template.png');
+    successmsg();
+    setTimeout(resetForm, 2000);
+});
+
+// SVG download: exports both canvases as SVG (opens in CorelDRAW / Illustrator)
+document.getElementById('downloadSVG').addEventListener('click', function () {
+    if (!generatedCanvas1 || !generatedCanvas2) return;
+    downloadSVG(generatedCanvas1, 'box_mockup.svg');
+    downloadSVG(generatedCanvas2, 'die_template.svg');
+    successmsg();
+    setTimeout(resetForm, 2000);
+});
 
 function resetForm() {
     location.reload();
 }
 
-function showErrorModal(message) {
+function showErrorModal() {
     Swal.fire({
         icon: "error",
         title: "Oops...",
         text: "Image Not Found! Try other",
     });
-    setTimeout(function(){
-        resetForm();
-    },2000);
+    setTimeout(resetForm, 2000);
 }
 
-function downloadImage(canvas, exportWidth, exportHeight, filename, multiplier = 1) {
-    const dataURL = canvas.toDataURL({
-        format: 'png',
-        multiplier: multiplier,
-    });
-
+function downloadImage(canvas, filename) {
+    const dataURL = canvas.toDataURL({ format: 'png', multiplier: 3 });
     const link = document.createElement('a');
     link.href = dataURL;
     link.download = filename;
     link.click();
-    successmsg();
-    setTimeout(function(){
-        resetForm();
-    },2000);
+}
+
+function downloadSVG(canvas, filename) {
+    const svgData = canvas.toSVG();
+    const blob = new Blob([svgData], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
 }
 
 function successmsg() {
@@ -271,7 +361,6 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
                 selectable: true,
                 hasControls: true,
             });
-
             canvas.add(logoFabricImg);
             canvas.setActiveObject(logoFabricImg);
             canvas.renderAll();
@@ -308,8 +397,7 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
     const selectedColor = colorMap[printingColor.toLowerCase()] || [0, 0, 0];
 
     for (let i = 0; i < data.length; i += 4) {
-        const a = data[i + 3];
-        if (a === 0) continue;
+        if (data[i + 3] === 0) continue;
         data[i] = selectedColor[0];
         data[i + 1] = selectedColor[1];
         data[i + 2] = selectedColor[2];
@@ -327,7 +415,6 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
             selectable: true,
             hasControls: true,
         });
-
         canvas.add(logoFabricImg);
         canvas.setActiveObject(logoFabricImg);
         canvas.renderAll();

@@ -63,7 +63,21 @@
                 </select>
 
                 <label for="logo">Upload Logo</label>
-                <input type="file" id="logo" name="logo" accept="image/png, image/svg+xml">
+                <div class="logo-instructions">
+                    <strong>How to upload your logo:</strong>
+                    <ul>
+                        <li>PNG files only (JPG and SVG are not accepted)</li>
+                        <li>Logo background will be <strong>automatically removed</strong></li>
+                        <li>Best results with logos on a white or solid-color background</li>
+                        <li>A preview will appear below after uploading</li>
+                    </ul>
+                </div>
+                <input type="file" id="logo" name="logo" accept="image/png">
+                <p id="bgProcessingHint" class="bg-processing-hint" style="display:none;">Removing background...</p>
+                <div id="logoPreviewWrap" style="display:none;">
+                    <img id="logoPreview" class="logo-preview" alt="Logo preview">
+                    <p class="bg-removed-hint">Background removed</p>
+                </div>
                 <div class="mybuttons">
                     <button type="button" id="generateBtn" class="generatebutton">Generate</button>
 
@@ -85,7 +99,8 @@
                 <canvas id="previewCanvas2" class="canvas-preview"></canvas>
             </div>
             <div id="downloadArea" style="display: none;">
-                <button id="downloadBoth" class="download-button">Download Both Images</button>
+                <button id="downloadPNG" class="download-button">Download PNG</button>
+                <button id="downloadSVG" class="download-button download-svg-btn">Download SVG <span class="svg-note">(CorelDRAW / Illustrator)</span></button>
             </div>
         </div>
     </div>

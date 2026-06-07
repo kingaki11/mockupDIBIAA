@@ -137,6 +137,66 @@ input {
     background-color: #0056b3;
 }
 
+.download-svg-btn {
+    background-color: #6f42c1;
+    margin-top: 8px;
+}
+
+.download-svg-btn:hover,
+.download-svg-btn:focus {
+    background-color: #5a32a3;
+    box-shadow: 0 0.5em 0.5em -0.4em #5a32a3;
+}
+
+.svg-note {
+    font-size: 11px;
+    opacity: 0.85;
+}
+
+.logo-instructions {
+    font-size: 12px;
+    color: #444;
+    background: #f0f8ff;
+    border: 1px solid #b0d4f1;
+    border-radius: 5px;
+    padding: 8px 12px;
+    margin-top: 6px;
+}
+
+.logo-instructions ul {
+    margin: 4px 0 0 0;
+    padding-left: 18px;
+}
+
+.logo-instructions li {
+    margin: 2px 0;
+}
+
+.logo-preview {
+    max-width: 80px;
+    max-height: 80px;
+    margin-top: 8px;
+    border: 1px dashed #aaa;
+    border-radius: 5px;
+    padding: 4px;
+    background-color: #f0f0f0;
+    display: block;
+}
+
+.bg-removed-hint {
+    color: #28a745;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 3px 0 0 0;
+}
+
+.bg-processing-hint {
+    color: #888;
+    font-size: 12px;
+    font-style: italic;
+    margin: 4px 0 0 0;
+}
+
 @media (min-width: 1000px) {
     .container {
         flex-direction: row;
