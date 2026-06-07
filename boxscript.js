@@ -349,15 +349,11 @@ function successmsg() {
     });
 }
 
-// Adds a size label strip at the bottom of the canvas showing logo dimensions
-// in pixels (at 3× export) and approximate mm at 300 DPI
+// Adds a size label strip at the bottom of the canvas.
+// Updates live as the user resizes the logo using the drag handles.
 function addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight) {
-    const pxW = Math.round(logoFabricImg.getScaledWidth() * 3);
-    const pxH = Math.round(logoFabricImg.getScaledHeight() * 3);
-    const mmW = Math.round((pxW / 300) * 25.4);
-    const mmH = Math.round((pxH / 300) * 25.4);
-
     const stripHeight = 20;
+
     const strip = new fabric.Rect({
         left: 0,
         top: canvasHeight - stripHeight,
@@ -368,23 +364,40 @@ function addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight) {
         evented: false,
     });
 
-    const label = new fabric.Text(
-        `Logo size:  ${pxW} × ${pxH} px  |  ~${mmW} × ${mmH} mm  (export @ 300 DPI)`,
-        {
-            left: canvasWidth / 2,
-            top: canvasHeight - stripHeight / 2,
-            originX: 'center',
-            originY: 'center',
-            fontSize: 8,
-            fill: '#222',
-            fontFamily: 'Arial',
-            selectable: false,
-            evented: false,
-        }
-    );
+    const label = new fabric.Text('', {
+        left: canvasWidth / 2,
+        top: canvasHeight - stripHeight / 2,
+        originX: 'center',
+        originY: 'center',
+        fontSize: 8,
+        fill: '#222',
+        fontFamily: 'Arial',
+        selectable: false,
+        evented: false,
+    });
 
     canvas.add(strip);
     canvas.add(label);
+
+    function updateLabel() {
+        const pxW = Math.round(logoFabricImg.width * logoFabricImg.scaleX * 3);
+        const pxH = Math.round(logoFabricImg.height * logoFabricImg.scaleY * 3);
+        const mmW = Math.round((pxW / 300) * 25.4);
+        const mmH = Math.round((pxH / 300) * 25.4);
+        label.set('text', `Logo size:  ${pxW} × ${pxH} px  |  ~${mmW} × ${mmH} mm  (@ 300 DPI)`);
+        canvas.requestRenderAll();
+    }
+
+    // Set initial label text
+    updateLabel();
+
+    // Update whenever the user scales or finishes modifying the logo
+    canvas.on('object:scaling', function (e) {
+        if (e.target === logoFabricImg) updateLabel();
+    });
+    canvas.on('object:modified', function (e) {
+        if (e.target === logoFabricImg) updateLabel();
+    });
 }
 
 function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
