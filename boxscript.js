@@ -194,7 +194,7 @@ document.getElementById('logo').addEventListener('change', function () {
             processedLogoUrl = removeBackground(img);
             processingHint.style.display = 'none';
             preview.src = processedLogoUrl;
-            previewWrap.style.display = 'block';
+            previewWrap.style.display = 'flex';
         };
         img.src = e.target.result;
     };
@@ -212,19 +212,6 @@ document.getElementById('generateBtn').addEventListener('click', function () {
     if (!boxColor) { alert("Please select a box color."); return; }
     if (!processedLogoUrl) { alert("Please upload a logo."); return; }
     if (!printingColor) { alert("Please select a printing color."); return; }
-
-    const imageContainer = document.getElementById('imgcontains');
-    const downloadArea = document.getElementById('downloadArea');
-
-    if (window.matchMedia("(max-width: 430px)").matches) {
-        imageContainer.style.transform = 'translateX(0px)';
-        imageContainer.style.width = '100%';
-        imageContainer.style.margin = '0 auto';
-        downloadArea.style.transform = 'translateX(90px) translateY(20px)';
-    } else {
-        imageContainer.style.transform = 'translateX(50px)';
-        downloadArea.style.transform = 'translateX(-610px) translateY(-200px)';
-    }
 
     const logoImg = new Image();
     logoImg.onload = function () {
@@ -278,7 +265,7 @@ document.getElementById('generateBtn').addEventListener('click', function () {
                         addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
                         addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
 
-                        document.getElementById('downloadArea').style.display = 'block';
+                        document.getElementById('downloadArea').style.display = 'flex';
                     });
                 });
             });
