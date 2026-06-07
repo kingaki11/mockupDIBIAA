@@ -466,11 +466,19 @@ let _3dRenderer  = null;
 let _3dFrameId   = null;
 let _3dActive    = false;
 
+// Shared colour palette used by both texture builder and _initViewer
+const _3dPalette = {
+    black: 0x1c1b17, brown: 0x7b4a2d, golden: 0xc9a84c,
+    green: 0x3a6b69, maroon: 0x7a2242, mauve: 0x7f5272,
+    pink: 0xe8a8b5, blue: 0x3e5980, grey: 0x7a7a7a,
+    lightpink: 0xffb0c0, mintgreen: 0x88c8be, white: 0xf0eeec,
+    boccumblue: 0x2e4a8a, orange: 0xc85a0a, red: 0xbf2020,
+};
+
 document.getElementById('view3dBtn').addEventListener('click', function () {
     const wrap = document.getElementById('viewer3dWrap');
 
     if (_3dActive) {
-        // Toggle off
         _3dActive = false;
         this.innerHTML = '&#9654; View in 3D';
         wrap.style.display = 'none';
@@ -478,25 +486,86 @@ document.getElementById('view3dBtn').addEventListener('click', function () {
         return;
     }
 
-    if (!generatedCanvas1) return;
+    if (!generatedCanvas1 || !processedLogoUrl) return;
 
     _3dActive = true;
     this.innerHTML = '&#9646;&#9646; Close 3D View';
 
-    // Capture the current box canvas as a texture
-    const textureURL = generatedCanvas1.toDataURL({ format: 'png', multiplier: 1 });
-    const boxColor   = document.getElementById('boxColor').value;
+    const boxColor      = document.getElementById('boxColor').value;
+    const printingColor = document.getElementById('printingColor').value;
 
-    if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined') {
-        _initViewer(textureURL, boxColor);
-    } else {
-        _loadScript('https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js', function () {
-            _loadScript('https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/OrbitControls.js', function () {
-                _initViewer(textureURL, boxColor);
+    // Build a clean face texture: solid box colour + centred logo only
+    _build3DTexture(processedLogoUrl, printingColor, boxColor, function (textureURL) {
+        if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined') {
+            _initViewer(textureURL, boxColor);
+        } else {
+            _loadScript('https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js', function () {
+                _loadScript('https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/OrbitControls.js', function () {
+                    _initViewer(textureURL, boxColor);
+                });
             });
-        });
-    }
+        }
+    });
 });
+
+// Creates a 512×512 canvas: box colour background + logo (recoloured) centred on it.
+// Calls cb(dataURL) when ready.
+function _build3DTexture(logoDataURL, printingColor, boxColor, cb) {
+    const SIZE = 512;
+    const out  = document.createElement('canvas');
+    out.width  = SIZE;
+    out.height = SIZE;
+    const ctx  = out.getContext('2d');
+
+    // Fill background with the box colour
+    const hex = _3dPalette[boxColor.toLowerCase()] || 0x777777;
+    ctx.fillStyle = '#' + hex.toString(16).padStart(6, '0');
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    // Load the background-removed logo
+    const logoImg = new Image();
+    logoImg.onload = function () {
+        // Apply printing colour (same logic as addLogoToCanvas)
+        const tmp  = document.createElement('canvas');
+        tmp.width  = logoImg.width;
+        tmp.height = logoImg.height;
+        const tctx = tmp.getContext('2d');
+        tctx.drawImage(logoImg, 0, 0);
+
+        if (printingColor.toLowerCase() !== 'none') {
+            const colorMap = {
+                'golden': [215, 181, 109], 'black': [28, 27, 23],
+                'red': [255, 0, 0], 'brown': [165, 42, 42],
+                'green': [62, 112, 110], 'grey': [128, 128, 128],
+                'magenta': [255, 0, 255], 'maroon': [128, 37, 74],
+                'orange': [128, 165, 0], 'pink': [255, 192, 203],
+                'purple': [128, 0, 128], 'silver': [197, 198, 198],
+                'white': [254, 254, 254], 'blue': [62, 89, 156],
+                'yellow': [255, 255, 0],
+            };
+            const col  = colorMap[printingColor.toLowerCase()] || [0, 0, 0];
+            const id   = tctx.getImageData(0, 0, logoImg.width, logoImg.height);
+            const data = id.data;
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] === 0) continue;
+                data[i] = col[0]; data[i + 1] = col[1]; data[i + 2] = col[2];
+            }
+            tctx.putImageData(id, 0, 0);
+        }
+
+        // Centre logo on the face at ~55 % of face size
+        const maxPx = SIZE * 0.55;
+        const scale = Math.min(maxPx / logoImg.width, maxPx / logoImg.height);
+        const w = Math.round(logoImg.width  * scale);
+        const h = Math.round(logoImg.height * scale);
+        const x = Math.round((SIZE - w) / 2);
+        const y = Math.round((SIZE - h) / 2);
+        ctx.drawImage(tmp, x, y, w, h);
+
+        cb(out.toDataURL('image/png'));
+    };
+    logoImg.src = logoDataURL;
+}
 
 function _loadScript(src, cb) {
     const s = document.createElement('script');
@@ -517,14 +586,12 @@ function _initViewer(textureURL, boxColor) {
     _disposeViewer();
     wrap.style.display = 'block';
 
-    const W = container.clientWidth  || 640;
+    const W = container.clientWidth || 640;
     const H = 400;
 
     // Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111827);
-
-    // Subtle fog for depth
     scene.fog = new THREE.Fog(0x111827, 12, 25);
 
     // Camera
@@ -539,14 +606,14 @@ function _initViewer(textureURL, boxColor) {
     container.appendChild(_3dRenderer.domElement);
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
     key.position.set(4, 6, 5);
     key.castShadow = true;
     scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0xd0e8ff, 0.35);
+    const fill = new THREE.DirectionalLight(0xd0e8ff, 0.3);
     fill.position.set(-4, 0, -3);
     scene.add(fill);
 
@@ -554,54 +621,45 @@ function _initViewer(textureURL, boxColor) {
     rim.position.set(0, -3, -6);
     scene.add(rim);
 
-    // Box colour palette
-    const palette = {
-        black: 0x1c1b17, brown: 0x7b4a2d, golden: 0xc9a84c,
-        green: 0x3a6b69, maroon: 0x7a2242, mauve: 0x7f5272,
-        pink: 0xe8a8b5, blue: 0x3e5980, grey: 0x7a7a7a,
-        lightpink: 0xffb0c0, mintgreen: 0x88c8be, white: 0xf0eeec,
-        boccumblue: 0x2e4a8a, orange: 0xc85a0a, red: 0xbf2020,
-    };
-
-    const base    = palette[boxColor.toLowerCase()] || 0x5a5a5a;
+    const base    = _3dPalette[boxColor.toLowerCase()] || 0x5a5a5a;
     const lighter = _shift(base, 1.28);
     const darker  = _shift(base, 0.62);
 
-    // Materials
-    const mSide  = new THREE.MeshLambertMaterial({ color: base });
-    const mTop   = new THREE.MeshLambertMaterial({ color: lighter });
-    const mSeam  = new THREE.MeshLambertMaterial({ color: darker });
-    const mFront = new THREE.MeshLambertMaterial({ color: base });
-
-    // Load box mockup as front-face texture
+    // Phong materials for a slight sheen
+    function mCol(hex) {
+        return new THREE.MeshPhongMaterial({ color: hex, shininess: 38 });
+    }
+    const mSide  = mCol(base);
+    const mTop   = mCol(lighter);
+    const mSeam  = mCol(darker);
+    // Front face: box colour + logo texture
+    const mFront = new THREE.MeshPhongMaterial({ color: base, shininess: 38 });
     new THREE.TextureLoader().load(textureURL, function (tex) {
-        tex.encoding = THREE.sRGBEncoding;
-        mFront.map   = tex;
-        mFront.color.set(0xffffff); // let texture render true-to-color
+        tex.encoding   = THREE.sRGBEncoding;
+        mFront.map     = tex;
+        mFront.color.set(0xffffff); // let texture colours show true
         mFront.needsUpdate = true;
     });
 
     // BoxGeometry face order: +X, -X, +Y(top), -Y(bottom), +Z(front), -Z(back)
-    // Box body — front face gets the mockup texture
     const body = new THREE.Mesh(
         new THREE.BoxGeometry(2.4, 1.35, 1.85),
         [mSide, mSide, mTop, mSeam, mFront, mSide]
     );
     body.position.y = -0.08;
-    body.castShadow  = true;
-    body.receiveShadow = true;
+    body.castShadow = body.receiveShadow = true;
     scene.add(body);
 
-    // Lid (slightly wider/deeper, sits on top of body)
+    // Thin lid strip on top
     const lid = new THREE.Mesh(
         new THREE.BoxGeometry(2.44, 0.16, 1.90),
         [mSide, mSide, mTop, mSeam, mSide, mSide]
     );
     lid.position.y = 0.755;
-    lid.castShadow  = true;
+    lid.castShadow = true;
     scene.add(lid);
 
-    // Floor / shadow catcher
+    // Floor
     const floor = new THREE.Mesh(
         new THREE.PlaneGeometry(30, 30),
         new THREE.MeshLambertMaterial({ color: 0x0d1117 })
@@ -622,12 +680,10 @@ function _initViewer(textureURL, boxColor) {
     controls.target.set(0, 0.3, 0);
     controls.update();
 
-    // Stop auto-rotation on any user interaction
     _3dRenderer.domElement.addEventListener('pointerdown', function () {
         controls.autoRotate = false;
     });
 
-    // Handle window resize
     function onResize() {
         if (!_3dRenderer) return;
         const w = container.clientWidth;
@@ -637,7 +693,6 @@ function _initViewer(textureURL, boxColor) {
     }
     window.addEventListener('resize', onResize);
 
-    // Render loop
     (function tick() {
         _3dFrameId = requestAnimationFrame(tick);
         controls.update();
