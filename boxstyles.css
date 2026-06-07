@@ -319,56 +319,6 @@ h2 {
     line-height: 1.4;
 }
 
-.view3d-btn {
-    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-    color: white;
-    box-shadow: 0 4px 14px rgba(15,23,42,.35);
-    letter-spacing: 0.5px;
-}
-
-.view3d-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 7px 20px rgba(15,23,42,.45);
-}
-
-.view3d-btn:active {
-    transform: translateY(0);
-}
-
-/* ── 3D Viewer ── */
-#viewer3dWrap {
-    width: 100%;
-    border-radius: 14px;
-    overflow: hidden;
-    box-shadow: var(--shadow-lg);
-    background: #0f172a;
-}
-
-#viewer3d {
-    width: 100%;
-    height: 400px;
-    display: block;
-    cursor: grab;
-}
-
-#viewer3d:active {
-    cursor: grabbing;
-}
-
-#viewer3d canvas {
-    display: block;
-    width: 100% !important;
-    height: 100% !important;
-}
-
-.viewer3d-hint {
-    text-align: center;
-    font-size: 11.5px;
-    color: #94a3b8;
-    padding: 9px 16px;
-    background: #1e293b;
-    letter-spacing: 0.2px;
-}
 
 #downloadPNG {
     background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
