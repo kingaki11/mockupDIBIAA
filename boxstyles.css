@@ -197,6 +197,95 @@ input[type="file"] {
     50% { opacity: 0.3; }
 }
 
+/* ── Text input ── */
+input[type="text"] {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--text);
+    background: var(--white);
+    outline: none;
+    transition: border-color 180ms, box-shadow 180ms;
+    font-family: inherit;
+}
+
+input[type="text"]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.14);
+}
+
+input[type="text"]::placeholder {
+    color: #94a3b8;
+}
+
+/* ── Add Text section ── */
+.text-section {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1.5px solid var(--border);
+}
+
+.text-section > label:first-child {
+    margin-top: 0;
+}
+
+.text-options {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.text-opt-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.text-opt-item label {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.text-opt-size select {
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+input[type="color"]#textColor {
+    width: 44px;
+    height: 38px;
+    padding: 3px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    background: none;
+    display: block;
+}
+
+input[type="color"]#textColor:hover {
+    border-color: #94a3b8;
+}
+
+#addTextBtn {
+    width: 100%;
+    margin-top: 12px;
+    background: linear-gradient(135deg, #0f172a 0%, #334155 100%);
+    color: white;
+    box-shadow: 0 3px 10px rgba(15,23,42,.25);
+}
+
+#addTextBtn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 5px 16px rgba(15,23,42,.32);
+}
+
+#addTextBtn:active {
+    transform: translateY(0);
+}
+
 /* ── Action buttons ── */
 .mybuttons {
     display: flex;

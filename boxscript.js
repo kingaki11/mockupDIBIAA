@@ -386,6 +386,51 @@ function addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight) {
     });
 }
 
+document.getElementById('addTextBtn').addEventListener('click', function () {
+    const text = document.getElementById('textInput').value.trim();
+    if (!text) {
+        alert('Please enter some text first.');
+        return;
+    }
+    if (!generatedCanvas1 || !generatedCanvas2) {
+        alert('Please click Generate first to create the canvas preview.');
+        return;
+    }
+
+    const color    = document.getElementById('textColor').value;
+    const fontSize = parseInt(document.getElementById('textSize').value, 10);
+
+    function addText(canvas, cW, cH) {
+        const t = new fabric.IText(text, {
+            left: cW / 2,
+            top: cH / 2,
+            originX: 'center',
+            originY: 'center',
+            fontSize: fontSize,
+            fill: color,
+            fontFamily: 'Arial',
+            selectable: true,
+            hasControls: true,
+            editable: true,
+        });
+        canvas.add(t);
+        canvas.setActiveObject(t);
+        canvas.renderAll();
+    }
+
+    addText(generatedCanvas1, 300, 300);
+    addText(generatedCanvas2, generatedCanvas2Dims.width, generatedCanvas2Dims.height);
+
+    document.getElementById('textInput').value = '';
+});
+
+document.getElementById('textInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('addTextBtn').click();
+    }
+});
+
 function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
     if (printingColor.toLowerCase() === 'none') {
         fabric.Image.fromURL(logoImg.src, function (logoFabricImg) {

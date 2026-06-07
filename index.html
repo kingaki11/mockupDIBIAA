@@ -78,6 +78,28 @@
                     <img id="logoPreview" class="logo-preview" alt="Logo preview">
                     <p class="bg-removed-hint">Background removed</p>
                 </div>
+
+                <div class="text-section">
+                    <label for="textInput">Add Custom Text</label>
+                    <input type="text" id="textInput" placeholder="e.g. With Love, Happy Birthday..." maxlength="60">
+                    <div class="text-options">
+                        <div class="text-opt-item">
+                            <label for="textColor">Text Color</label>
+                            <input type="color" id="textColor" value="#ffffff">
+                        </div>
+                        <div class="text-opt-item text-opt-size">
+                            <label for="textSize">Font Size</label>
+                            <select id="textSize">
+                                <option value="14">Small</option>
+                                <option value="22" selected>Medium</option>
+                                <option value="32">Large</option>
+                                <option value="44">X-Large</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="button" id="addTextBtn">+ Add Text to Canvas</button>
+                </div>
+
                 <div class="mybuttons">
                     <button type="button" id="generateBtn" class="generatebutton">Generate</button>
 
