@@ -234,40 +234,37 @@ document.getElementById('generateBtn').addEventListener('click', function () {
         const boxImagePathJpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
 
         loadImage(boxImagePathPng1, boxImagePathJpg1, (boxImg1) => {
-            fabric.Image.fromURL(boxImg1.src, function (boxImg1Fabric) {
-                boxImg1Fabric.scaleToWidth(300);
-                boxImg1Fabric.scaleToHeight(300);
-                boxImg1Fabric.selectable = false;
-                canvas1.add(boxImg1Fabric);
+            // Use already-loaded element directly — avoids fromURL refetch/CORS issues
+            const boxImg1Fabric = new fabric.Image(boxImg1, { selectable: false });
+            boxImg1Fabric.scaleToWidth(300);
+            boxImg1Fabric.scaleToHeight(300);
+            canvas1.add(boxImg1Fabric);
 
-                loadImage(boxImagePathPng2, boxImagePathJpg2, (boxImg2) => {
-                    const canvas2Width = 300;
-                    const aspectRatio = boxImg2.width / boxImg2.height;
-                    const canvas2Height = canvas2Width / aspectRatio;
+            loadImage(boxImagePathPng2, boxImagePathJpg2, (boxImg2) => {
+                const canvas2Width = 300;
+                const aspectRatio = boxImg2.width / boxImg2.height;
+                const canvas2Height = canvas2Width / aspectRatio;
 
-                    const canvas2 = new fabric.Canvas('previewCanvas2', {
-                        width: canvas2Width,
-                        height: canvas2Height,
-                        backgroundColor: '#fff'
-                    });
-                    generatedCanvas2 = canvas2;
-                    generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
-
-                    fabric.Image.fromURL(boxImg2.src, function (boxImg2Fabric) {
-                        const scaleFactor = Math.min(
-                            canvas2Width / boxImg2.width,
-                            canvas2Height / boxImg2.height
-                        );
-                        boxImg2Fabric.scale(scaleFactor);
-                        boxImg2Fabric.selectable = false;
-                        canvas2.add(boxImg2Fabric);
-
-                        addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
-                        addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
-
-                        document.getElementById('downloadArea').style.display = 'flex';
-                    });
+                const canvas2 = new fabric.Canvas('previewCanvas2', {
+                    width: canvas2Width,
+                    height: canvas2Height,
+                    backgroundColor: '#fff'
                 });
+                generatedCanvas2 = canvas2;
+                generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
+
+                const scaleFactor = Math.min(canvas2Width / boxImg2.width, canvas2Height / boxImg2.height);
+                const boxImg2Fabric = new fabric.Image(boxImg2, { selectable: false });
+                boxImg2Fabric.scale(scaleFactor);
+                canvas2.add(boxImg2Fabric);
+
+                addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
+                addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
+
+                canvas1.renderAll();
+                canvas2.renderAll();
+
+                document.getElementById('downloadArea').style.display = 'flex';
             });
         });
     };
@@ -389,21 +386,20 @@ function addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight) {
 
 function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
     if (printingColor.toLowerCase() === 'none') {
-        fabric.Image.fromURL(logoImg.src, function (logoFabricImg) {
-            logoFabricImg.scaleToWidth(50);
-            logoFabricImg.set({
-                left: canvasWidth / 2,
-                top: canvasHeight / 2,
-                originX: 'center',
-                originY: 'center',
-                selectable: true,
-                hasControls: true,
-            });
-            canvas.add(logoFabricImg);
-            canvas.setActiveObject(logoFabricImg);
-            addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight);
-            canvas.renderAll();
+        const logoFabricImg = new fabric.Image(logoImg);
+        logoFabricImg.scaleToWidth(50);
+        logoFabricImg.set({
+            left: canvasWidth / 2,
+            top: canvasHeight / 2,
+            originX: 'center',
+            originY: 'center',
+            selectable: true,
+            hasControls: true,
         });
+        canvas.add(logoFabricImg);
+        canvas.setActiveObject(logoFabricImg);
+        addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight);
+        canvas.renderAll();
         return;
     }
 
