@@ -201,7 +201,7 @@ document.getElementById('logo').addEventListener('change', function () {
     reader.readAsDataURL(file);
 });
 
-document.getElementById('generateBtn').addEventListener('click', async function () {
+document.getElementById('generateBtn').addEventListener('click', function () {
     const boxType = boxTypeSelect.value;
     const boxStyle = boxStyleSelect.value;
     const boxColor = boxColorSelect.value;
@@ -213,92 +213,62 @@ document.getElementById('generateBtn').addEventListener('click', async function 
     if (!processedLogoUrl) { alert("Please upload a logo."); return; }
     if (!printingColor) { alert("Please select a printing color."); return; }
 
-    // Fetch an image via the browser's Fetch API and return it as a base64 data URL.
-    // Tries pngPath first, then jpgPath as fallback. Returns null if both fail.
-    // Using fetch() instead of new Image() avoids all crossOrigin/tainted-canvas issues.
-    async function fetchDataURL(pngPath, jpgPath) {
-        for (const path of [pngPath, jpgPath]) {
-            try {
-                const res = await fetch(path);
-                if (!res.ok) continue;
-                const blob = await res.blob();
-                return await new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                });
-            } catch (e) { /* try next path */ }
-        }
-        return null;
-    }
-
-    // Wrap fabric.Image.fromURL in a Promise for use with async/await
-    function fabricFromURL(dataURL) {
-        return new Promise((resolve) => {
-            fabric.Image.fromURL(dataURL, function (img, isError) {
-                resolve(isError ? null : img);
-            });
-        });
-    }
-
-    const png1 = `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
-    const jpg1 = `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
-    const png2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
-    const jpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
-
-    // Fetch both images in parallel
-    const [dataURL1, dataURL2] = await Promise.all([
-        fetchDataURL(png1, jpg1),
-        fetchDataURL(png2, jpg2),
-    ]);
-
-    if (!dataURL1 || !dataURL2) { showErrorModal(); return; }
-
-    // Load both into fabric in parallel
-    const [fabricImg1, fabricImg2] = await Promise.all([
-        fabricFromURL(dataURL1),
-        fabricFromURL(dataURL2),
-    ]);
-
-    if (!fabricImg1 || !fabricImg2) { showErrorModal(); return; }
-
-    const canvas2Width  = 300;
-    const canvas2Height = Math.round(canvas2Width / (fabricImg2.width / fabricImg2.height));
-
-    // Dispose any previous canvases (in case user clicked Generate more than once)
-    try { if (generatedCanvas1) generatedCanvas1.dispose(); } catch (e) {}
-    try { if (generatedCanvas2) generatedCanvas2.dispose(); } catch (e) {}
-
-    const canvas1 = new fabric.Canvas('previewCanvas1', { width: 300, height: 300, backgroundColor: '#fff' });
-    generatedCanvas1 = canvas1;
-
-    const canvas2 = new fabric.Canvas('previewCanvas2', {
-        width: canvas2Width, height: canvas2Height, backgroundColor: '#fff'
-    });
-    generatedCanvas2 = canvas2;
-    generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
-
-    // Place box image filling canvas1
-    fabricImg1.scaleToWidth(300);
-    fabricImg1.scaleToHeight(300);
-    fabricImg1.selectable = false;
-    canvas1.add(fabricImg1);
-    canvas1.renderAll();
-
-    // Place die image scaled to fit canvas2
-    const scale2 = Math.min(canvas2Width / fabricImg2.width, canvas2Height / fabricImg2.height);
-    fabricImg2.scale(scale2);
-    fabricImg2.selectable = false;
-    canvas2.add(fabricImg2);
-    canvas2.renderAll();
-
-    // Load the processed logo and add it to both canvases
+    // Mirror the original working structure: canvas creation and image loading
+    // happen inside the logo image's onload, exactly as it worked before.
     const logoImg = new Image();
     logoImg.onload = function () {
-        addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
-        addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
-        document.getElementById('downloadArea').style.display = 'flex';
+
+        function loadImage(path, fallbackPath, callback) {
+            const img = new Image();
+            img.onload = function () { callback(img); };
+            img.onerror = function () {
+                img.onload = function () { callback(img); };
+                img.onerror = function () { showErrorModal(); };
+                img.src = fallbackPath;
+            };
+            img.src = path;
+        }
+
+        const png1 = `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
+        const jpg1 = `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
+        const png2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
+        const jpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
+
+        const canvas1 = new fabric.Canvas('previewCanvas1', { width: 300, height: 300, backgroundColor: '#fff' });
+        generatedCanvas1 = canvas1;
+
+        loadImage(png1, jpg1, function (boxImg1) {
+            fabric.Image.fromURL(boxImg1.src, function (boxImg1Fabric) {
+                boxImg1Fabric.scaleToWidth(300);
+                boxImg1Fabric.scaleToHeight(300);
+                boxImg1Fabric.selectable = false;
+                canvas1.add(boxImg1Fabric);
+                canvas1.renderAll();
+
+                loadImage(png2, jpg2, function (boxImg2) {
+                    const canvas2Width  = 300;
+                    const canvas2Height = Math.round(canvas2Width / (boxImg2.naturalWidth / boxImg2.naturalHeight));
+
+                    const canvas2 = new fabric.Canvas('previewCanvas2', {
+                        width: canvas2Width, height: canvas2Height, backgroundColor: '#fff'
+                    });
+                    generatedCanvas2 = canvas2;
+                    generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
+
+                    fabric.Image.fromURL(boxImg2.src, function (boxImg2Fabric) {
+                        const scale = Math.min(canvas2Width / boxImg2.naturalWidth, canvas2Height / boxImg2.naturalHeight);
+                        boxImg2Fabric.scale(scale);
+                        boxImg2Fabric.selectable = false;
+                        canvas2.add(boxImg2Fabric);
+                        canvas2.renderAll();
+
+                        addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
+                        addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
+                        document.getElementById('downloadArea').style.display = 'flex';
+                    });
+                });
+            });
+        });
     };
     logoImg.src = processedLogoUrl;
 });
