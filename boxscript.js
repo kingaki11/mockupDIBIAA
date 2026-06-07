@@ -349,6 +349,44 @@ function successmsg() {
     });
 }
 
+// Adds a size label strip at the bottom of the canvas showing logo dimensions
+// in pixels (at 3× export) and approximate mm at 300 DPI
+function addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight) {
+    const pxW = Math.round(logoFabricImg.getScaledWidth() * 3);
+    const pxH = Math.round(logoFabricImg.getScaledHeight() * 3);
+    const mmW = Math.round((pxW / 300) * 25.4);
+    const mmH = Math.round((pxH / 300) * 25.4);
+
+    const stripHeight = 20;
+    const strip = new fabric.Rect({
+        left: 0,
+        top: canvasHeight - stripHeight,
+        width: canvasWidth,
+        height: stripHeight,
+        fill: 'rgba(255,255,255,0.88)',
+        selectable: false,
+        evented: false,
+    });
+
+    const label = new fabric.Text(
+        `Logo size:  ${pxW} × ${pxH} px  |  ~${mmW} × ${mmH} mm  (export @ 300 DPI)`,
+        {
+            left: canvasWidth / 2,
+            top: canvasHeight - stripHeight / 2,
+            originX: 'center',
+            originY: 'center',
+            fontSize: 8,
+            fill: '#222',
+            fontFamily: 'Arial',
+            selectable: false,
+            evented: false,
+        }
+    );
+
+    canvas.add(strip);
+    canvas.add(label);
+}
+
 function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
     if (printingColor.toLowerCase() === 'none') {
         fabric.Image.fromURL(logoImg.src, function (logoFabricImg) {
@@ -363,6 +401,7 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
             });
             canvas.add(logoFabricImg);
             canvas.setActiveObject(logoFabricImg);
+            addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight);
             canvas.renderAll();
         });
         return;
@@ -417,6 +456,7 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
         });
         canvas.add(logoFabricImg);
         canvas.setActiveObject(logoFabricImg);
+        addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight);
         canvas.renderAll();
     });
 }
