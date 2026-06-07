@@ -213,62 +213,76 @@ document.getElementById('generateBtn').addEventListener('click', function () {
     if (!processedLogoUrl) { alert("Please upload a logo."); return; }
     if (!printingColor) { alert("Please select a printing color."); return; }
 
-    const logoImg = new Image();
-    logoImg.onload = function () {
-        const canvas1 = new fabric.Canvas('previewCanvas1', { width: 300, height: 300, backgroundColor: '#fff' });
-        generatedCanvas1 = canvas1;
+    // Converts an already-loaded HTMLImageElement to a data URL so fabric.js
+    // always treats it as same-origin (avoids tainted-canvas / CORS silent failures)
+    function imgToDataURL(img) {
+        const c = document.createElement('canvas');
+        c.width  = img.naturalWidth  || img.width  || 1;
+        c.height = img.naturalHeight || img.height || 1;
+        c.getContext('2d').drawImage(img, 0, 0);
+        return c.toDataURL();
+    }
 
-        const loadImage = (path, fallbackPath, callback) => {
-            const img = new Image();
-            img.src = path;
-            img.onerror = () => {
-                img.src = fallbackPath;
-                img.onerror = () => { showErrorModal(); };
-            };
-            img.onload = () => { callback(img); };
+    // Loads an image with correct handler ordering and crossOrigin set
+    function loadImage(path, fallbackPath, callback) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload  = () => callback(img);
+        img.onerror = () => {
+            const fb = new Image();
+            fb.crossOrigin = 'anonymous';
+            fb.onload  = () => callback(fb);
+            fb.onerror = () => showErrorModal();
+            fb.src = fallbackPath;
         };
+        img.src = path;
+    }
 
-        const boxImagePathPng1 = `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
-        const boxImagePathJpg1 = `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
-        const boxImagePathPng2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
-        const boxImagePathJpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
+    const boxImagePathPng1 = `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
+    const boxImagePathJpg1 = `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
+    const boxImagePathPng2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
+    const boxImagePathJpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
 
-        loadImage(boxImagePathPng1, boxImagePathJpg1, (boxImg1) => {
-            // Use already-loaded element directly — avoids fromURL refetch/CORS issues
-            const boxImg1Fabric = new fabric.Image(boxImg1, { selectable: false });
+    const canvas1 = new fabric.Canvas('previewCanvas1', { width: 300, height: 300, backgroundColor: '#fff' });
+    generatedCanvas1 = canvas1;
+
+    loadImage(boxImagePathPng1, boxImagePathJpg1, (boxImg1) => {
+        // Convert to data URL so fabric never hits a cross-origin restriction
+        fabric.Image.fromURL(imgToDataURL(boxImg1), function (boxImg1Fabric) {
             boxImg1Fabric.scaleToWidth(300);
             boxImg1Fabric.scaleToHeight(300);
+            boxImg1Fabric.selectable = false;
             canvas1.add(boxImg1Fabric);
+            canvas1.renderAll();
 
             loadImage(boxImagePathPng2, boxImagePathJpg2, (boxImg2) => {
-                const canvas2Width = 300;
-                const aspectRatio = boxImg2.width / boxImg2.height;
-                const canvas2Height = canvas2Width / aspectRatio;
+                const canvas2Width  = 300;
+                const canvas2Height = canvas2Width / (boxImg2.naturalWidth / boxImg2.naturalHeight);
 
                 const canvas2 = new fabric.Canvas('previewCanvas2', {
-                    width: canvas2Width,
-                    height: canvas2Height,
-                    backgroundColor: '#fff'
+                    width: canvas2Width, height: canvas2Height, backgroundColor: '#fff'
                 });
                 generatedCanvas2 = canvas2;
                 generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
 
-                const scaleFactor = Math.min(canvas2Width / boxImg2.width, canvas2Height / boxImg2.height);
-                const boxImg2Fabric = new fabric.Image(boxImg2, { selectable: false });
-                boxImg2Fabric.scale(scaleFactor);
-                canvas2.add(boxImg2Fabric);
+                fabric.Image.fromURL(imgToDataURL(boxImg2), function (boxImg2Fabric) {
+                    const scale = Math.min(canvas2Width / boxImg2.naturalWidth, canvas2Height / boxImg2.naturalHeight);
+                    boxImg2Fabric.scale(scale);
+                    boxImg2Fabric.selectable = false;
+                    canvas2.add(boxImg2Fabric);
+                    canvas2.renderAll();
 
-                addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
-                addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
-
-                canvas1.renderAll();
-                canvas2.renderAll();
-
-                document.getElementById('downloadArea').style.display = 'flex';
+                    const logoImg = new Image();
+                    logoImg.onload = function () {
+                        addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
+                        addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
+                        document.getElementById('downloadArea').style.display = 'flex';
+                    };
+                    logoImg.src = processedLogoUrl;
+                });
             });
         });
-    };
-    logoImg.src = processedLogoUrl;
+    });
 });
 
 document.getElementById('resetBtn').addEventListener('click', resetForm);
@@ -386,20 +400,21 @@ function addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight) {
 
 function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
     if (printingColor.toLowerCase() === 'none') {
-        const logoFabricImg = new fabric.Image(logoImg);
-        logoFabricImg.scaleToWidth(50);
-        logoFabricImg.set({
-            left: canvasWidth / 2,
-            top: canvasHeight / 2,
-            originX: 'center',
-            originY: 'center',
-            selectable: true,
-            hasControls: true,
+        fabric.Image.fromURL(logoImg.src, function (logoFabricImg) {
+            logoFabricImg.scaleToWidth(50);
+            logoFabricImg.set({
+                left: canvasWidth / 2,
+                top: canvasHeight / 2,
+                originX: 'center',
+                originY: 'center',
+                selectable: true,
+                hasControls: true,
+            });
+            canvas.add(logoFabricImg);
+            canvas.setActiveObject(logoFabricImg);
+            addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight);
+            canvas.renderAll();
         });
-        canvas.add(logoFabricImg);
-        canvas.setActiveObject(logoFabricImg);
-        addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight);
-        canvas.renderAll();
         return;
     }
 
