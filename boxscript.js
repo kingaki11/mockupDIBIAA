@@ -459,3 +459,196 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
         canvas.renderAll();
     });
 }
+
+// ─── 3D Viewer ───────────────────────────────────────────────────────────────
+
+let _3dRenderer  = null;
+let _3dFrameId   = null;
+let _3dActive    = false;
+
+document.getElementById('view3dBtn').addEventListener('click', function () {
+    const wrap = document.getElementById('viewer3dWrap');
+
+    if (_3dActive) {
+        // Toggle off
+        _3dActive = false;
+        this.innerHTML = '&#9654; View in 3D';
+        wrap.style.display = 'none';
+        _disposeViewer();
+        return;
+    }
+
+    if (!generatedCanvas1) return;
+
+    _3dActive = true;
+    this.innerHTML = '&#9646;&#9646; Close 3D View';
+
+    // Capture the current box canvas as a texture
+    const textureURL = generatedCanvas1.toDataURL({ format: 'png', multiplier: 1 });
+    const boxColor   = document.getElementById('boxColor').value;
+
+    if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined') {
+        _initViewer(textureURL, boxColor);
+    } else {
+        _loadScript('https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js', function () {
+            _loadScript('https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/OrbitControls.js', function () {
+                _initViewer(textureURL, boxColor);
+            });
+        });
+    }
+});
+
+function _loadScript(src, cb) {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = cb;
+    document.head.appendChild(s);
+}
+
+function _disposeViewer() {
+    if (_3dFrameId) { cancelAnimationFrame(_3dFrameId); _3dFrameId = null; }
+    if (_3dRenderer) { _3dRenderer.dispose(); _3dRenderer = null; }
+    document.getElementById('viewer3d').innerHTML = '';
+}
+
+function _initViewer(textureURL, boxColor) {
+    const wrap      = document.getElementById('viewer3dWrap');
+    const container = document.getElementById('viewer3d');
+    _disposeViewer();
+    wrap.style.display = 'block';
+
+    const W = container.clientWidth  || 640;
+    const H = 400;
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111827);
+
+    // Subtle fog for depth
+    scene.fog = new THREE.Fog(0x111827, 12, 25);
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(36, W / H, 0.1, 100);
+    camera.position.set(0, 0.7, 6.2);
+
+    // Renderer
+    _3dRenderer = new THREE.WebGLRenderer({ antialias: true });
+    _3dRenderer.setSize(W, H);
+    _3dRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    _3dRenderer.shadowMap.enabled = true;
+    container.appendChild(_3dRenderer.domElement);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+
+    const key = new THREE.DirectionalLight(0xffffff, 0.9);
+    key.position.set(4, 6, 5);
+    key.castShadow = true;
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xd0e8ff, 0.35);
+    fill.position.set(-4, 0, -3);
+    scene.add(fill);
+
+    const rim = new THREE.DirectionalLight(0xfff0d0, 0.2);
+    rim.position.set(0, -3, -6);
+    scene.add(rim);
+
+    // Box colour palette
+    const palette = {
+        black: 0x1c1b17, brown: 0x7b4a2d, golden: 0xc9a84c,
+        green: 0x3a6b69, maroon: 0x7a2242, mauve: 0x7f5272,
+        pink: 0xe8a8b5, blue: 0x3e5980, grey: 0x7a7a7a,
+        lightpink: 0xffb0c0, mintgreen: 0x88c8be, white: 0xf0eeec,
+        boccumblue: 0x2e4a8a, orange: 0xc85a0a, red: 0xbf2020,
+    };
+
+    const base    = palette[boxColor.toLowerCase()] || 0x5a5a5a;
+    const lighter = _shift(base, 1.28);
+    const darker  = _shift(base, 0.62);
+
+    // Materials
+    const mSide  = new THREE.MeshLambertMaterial({ color: base });
+    const mTop   = new THREE.MeshLambertMaterial({ color: lighter });
+    const mSeam  = new THREE.MeshLambertMaterial({ color: darker });
+    const mFront = new THREE.MeshLambertMaterial({ color: base });
+
+    // Load box mockup as front-face texture
+    new THREE.TextureLoader().load(textureURL, function (tex) {
+        tex.encoding = THREE.sRGBEncoding;
+        mFront.map   = tex;
+        mFront.color.set(0xffffff); // let texture render true-to-color
+        mFront.needsUpdate = true;
+    });
+
+    // BoxGeometry face order: +X, -X, +Y(top), -Y(bottom), +Z(front), -Z(back)
+    // Box body — front face gets the mockup texture
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(2.4, 1.35, 1.85),
+        [mSide, mSide, mTop, mSeam, mFront, mSide]
+    );
+    body.position.y = -0.08;
+    body.castShadow  = true;
+    body.receiveShadow = true;
+    scene.add(body);
+
+    // Lid (slightly wider/deeper, sits on top of body)
+    const lid = new THREE.Mesh(
+        new THREE.BoxGeometry(2.44, 0.16, 1.90),
+        [mSide, mSide, mTop, mSeam, mSide, mSide]
+    );
+    lid.position.y = 0.755;
+    lid.castShadow  = true;
+    scene.add(lid);
+
+    // Floor / shadow catcher
+    const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(30, 30),
+        new THREE.MeshLambertMaterial({ color: 0x0d1117 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.84;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // OrbitControls
+    const controls = new THREE.OrbitControls(camera, _3dRenderer.domElement);
+    controls.enableDamping   = true;
+    controls.dampingFactor   = 0.07;
+    controls.minDistance     = 3.5;
+    controls.maxDistance     = 14;
+    controls.autoRotate      = true;
+    controls.autoRotateSpeed = 1.6;
+    controls.target.set(0, 0.3, 0);
+    controls.update();
+
+    // Stop auto-rotation on any user interaction
+    _3dRenderer.domElement.addEventListener('pointerdown', function () {
+        controls.autoRotate = false;
+    });
+
+    // Handle window resize
+    function onResize() {
+        if (!_3dRenderer) return;
+        const w = container.clientWidth;
+        camera.aspect = w / H;
+        camera.updateProjectionMatrix();
+        _3dRenderer.setSize(w, H);
+    }
+    window.addEventListener('resize', onResize);
+
+    // Render loop
+    (function tick() {
+        _3dFrameId = requestAnimationFrame(tick);
+        controls.update();
+        _3dRenderer.render(scene, camera);
+    })();
+}
+
+// Brightens or darkens a packed hex colour by a factor
+function _shift(hex, f) {
+    const r = Math.min(255, Math.round(((hex >> 16) & 0xff) * f));
+    const g = Math.min(255, Math.round(((hex >>  8) & 0xff) * f));
+    const b = Math.min(255, Math.round(( hex        & 0xff) * f));
+    return (r << 16) | (g << 8) | b;
+}
