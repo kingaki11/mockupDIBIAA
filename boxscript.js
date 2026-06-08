@@ -313,11 +313,13 @@ function addTempSizeLabels(canvas) {
     canvas.getObjects().filter(function (o) { return o.selectable; }).forEach(function (obj) {
         var pxW = Math.round(obj.width * obj.scaleX * 3);
         var pxH = Math.round(obj.height * obj.scaleY * 3);
-        var mmW = Math.round((pxW / 300) * 25.4);
-        var mmH = Math.round((pxH / 300) * 25.4);
+        var cmW = (pxW / 300 * 2.54).toFixed(1);
+        var cmH = (pxH / 300 * 2.54).toFixed(1);
+        var inW = (pxW / 300).toFixed(2);
+        var inH = (pxH / 300).toFixed(2);
         var b   = obj.getBoundingRect(true);
         var top = b.top >= 15 ? b.top - 15 : b.top + 2;
-        var lbl = new fabric.Text(pxW + '\xd7' + pxH + ' px  (~' + mmW + '\xd7' + mmH + ' mm)', {
+        var lbl = new fabric.Text(cmW + '\xd7' + cmH + ' cm  (' + inW + '\xd7' + inH + ' in)', {
             left: Math.max(2, b.left),
             top: top,
             fontSize: 9,
@@ -423,9 +425,11 @@ function updateCanvasLabel(canvas, obj) {
     if (!canvas._sizeLabel || !obj) return;
     const pxW = Math.round(obj.width * obj.scaleX * 3);
     const pxH = Math.round(obj.height * obj.scaleY * 3);
-    const mmW = Math.round((pxW / 300) * 25.4);
-    const mmH = Math.round((pxH / 300) * 25.4);
-    canvas._sizeLabel.set('text', `Size: ${pxW} × ${pxH} px  |  ~${mmW} × ${mmH} mm  (@ 300 DPI)`);
+    const cmW = (pxW / 300 * 2.54).toFixed(1);
+    const cmH = (pxH / 300 * 2.54).toFixed(1);
+    const inW = (pxW / 300).toFixed(2);
+    const inH = (pxH / 300).toFixed(2);
+    canvas._sizeLabel.set('text', `Size: ${cmW} × ${cmH} cm  |  ${inW} × ${inH} in  (@ 300 DPI)`);
     canvas.requestRenderAll();
 }
 
