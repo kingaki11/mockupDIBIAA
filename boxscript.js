@@ -335,55 +335,60 @@ function successmsg() {
     });
 }
 
-// Adds a size label strip at the bottom of the canvas.
-// Updates live as the user resizes the logo using the drag handles.
-function addSizeLabel(logoFabricImg, canvas, canvasWidth, canvasHeight) {
+// Shared size label strip at the bottom of the canvas.
+// Created once per canvas; reused (brought to front) for every subsequent object.
+// Updates live on scale/modify, and also when the selection changes.
+function addSizeLabel(fabricObj, canvas, canvasWidth, canvasHeight) {
     const stripHeight = 20;
 
-    const strip = new fabric.Rect({
-        left: 0,
-        top: canvasHeight - stripHeight,
-        width: canvasWidth,
-        height: stripHeight,
-        fill: 'rgba(255,255,255,0.88)',
-        selectable: false,
-        evented: false,
-    });
+    if (!canvas._sizeStrip) {
+        const strip = new fabric.Rect({
+            left: 0, top: canvasHeight - stripHeight,
+            width: canvasWidth, height: stripHeight,
+            fill: 'rgba(255,255,255,0.88)', selectable: false, evented: false,
+        });
+        const label = new fabric.Text('', {
+            left: canvasWidth / 2, top: canvasHeight - stripHeight / 2,
+            originX: 'center', originY: 'center',
+            fontSize: 8, fill: '#222', fontFamily: 'Arial',
+            selectable: false, evented: false,
+        });
+        canvas.add(strip);
+        canvas.add(label);
+        canvas._sizeStrip = strip;
+        canvas._sizeLabel = label;
 
-    const label = new fabric.Text('', {
-        left: canvasWidth / 2,
-        top: canvasHeight - stripHeight / 2,
-        originX: 'center',
-        originY: 'center',
-        fontSize: 8,
-        fill: '#222',
-        fontFamily: 'Arial',
-        selectable: false,
-        evented: false,
-    });
-
-    canvas.add(strip);
-    canvas.add(label);
-
-    function updateLabel() {
-        const pxW = Math.round(logoFabricImg.width * logoFabricImg.scaleX * 3);
-        const pxH = Math.round(logoFabricImg.height * logoFabricImg.scaleY * 3);
-        const mmW = Math.round((pxW / 300) * 25.4);
-        const mmH = Math.round((pxH / 300) * 25.4);
-        label.set('text', `Logo size:  ${pxW} × ${pxH} px  |  ~${mmW} × ${mmH} mm  (@ 300 DPI)`);
-        canvas.requestRenderAll();
+        canvas.on('object:scaling', function (e) {
+            if (e.target && e.target.selectable) updateCanvasLabel(canvas, e.target);
+        });
+        canvas.on('object:modified', function (e) {
+            if (e.target && e.target.selectable) updateCanvasLabel(canvas, e.target);
+        });
+        canvas.on('selection:created', function (e) {
+            updateCanvasLabel(canvas, e.target || (e.selected && e.selected[0]));
+        });
+        canvas.on('selection:updated', function (e) {
+            updateCanvasLabel(canvas, e.target || (e.selected && e.selected[0]));
+        });
+        canvas.on('selection:cleared', function () {
+            if (canvas._sizeLabel) { canvas._sizeLabel.set('text', ''); canvas.requestRenderAll(); }
+        });
+    } else {
+        canvas.bringToFront(canvas._sizeStrip);
+        canvas.bringToFront(canvas._sizeLabel);
     }
 
-    // Set initial label text
-    updateLabel();
+    updateCanvasLabel(canvas, fabricObj);
+}
 
-    // Update whenever the user scales or finishes modifying the logo
-    canvas.on('object:scaling', function (e) {
-        if (e.target === logoFabricImg) updateLabel();
-    });
-    canvas.on('object:modified', function (e) {
-        if (e.target === logoFabricImg) updateLabel();
-    });
+function updateCanvasLabel(canvas, obj) {
+    if (!canvas._sizeLabel || !obj) return;
+    const pxW = Math.round(obj.width * obj.scaleX * 3);
+    const pxH = Math.round(obj.height * obj.scaleY * 3);
+    const mmW = Math.round((pxW / 300) * 25.4);
+    const mmH = Math.round((pxH / 300) * 25.4);
+    canvas._sizeLabel.set('text', `Size: ${pxW} × ${pxH} px  |  ~${mmW} × ${mmH} mm  (@ 300 DPI)`);
+    canvas.requestRenderAll();
 }
 
 document.getElementById('addTextBtn').addEventListener('click', function () {
@@ -415,6 +420,7 @@ document.getElementById('addTextBtn').addEventListener('click', function () {
         });
         canvas.add(t);
         canvas.setActiveObject(t);
+        addSizeLabel(t, canvas, cW, cH);
         canvas.renderAll();
     }
 
@@ -477,6 +483,7 @@ function addIconToCanvas(type, color, size, canvas, cW, cH) {
         group.set({ left: cW / 2, top: cH / 2, originX: 'center', originY: 'center', selectable: true, hasControls: true });
         canvas.add(group);
         canvas.setActiveObject(group);
+        addSizeLabel(group, canvas, cW, cH);
         canvas.renderAll();
     });
 }
@@ -521,6 +528,7 @@ function addShapeToCanvas(type, color, size, canvas, cW, cH) {
     obj.set({ left: cx, top: cy, originX: 'center', originY: 'center', selectable: true, hasControls: true });
     canvas.add(obj);
     canvas.setActiveObject(obj);
+    addSizeLabel(obj, canvas, cW, cH);
     canvas.renderAll();
 }
 
