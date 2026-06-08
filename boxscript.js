@@ -431,6 +431,65 @@ document.getElementById('textInput').addEventListener('keydown', function (e) {
     }
 });
 
+// ── Shapes & Icons ──
+
+document.querySelectorAll('.shape-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        if (!generatedCanvas1 || !generatedCanvas2) {
+            alert('Please click Generate first to create the canvas preview.');
+            return;
+        }
+        const shapeType = this.dataset.shape;
+        const color = document.getElementById('shapeColor').value;
+        const size  = parseInt(document.getElementById('shapeSize').value, 10);
+        addShapeToCanvas(shapeType, color, size, generatedCanvas1, 300, 300);
+        addShapeToCanvas(shapeType, color, size, generatedCanvas2, generatedCanvas2Dims.width, generatedCanvas2Dims.height);
+    });
+});
+
+function starPoints(outerR, innerR, numPts) {
+    const pts = [];
+    for (let i = 0; i < numPts * 2; i++) {
+        const angle = (i * Math.PI) / numPts - Math.PI / 2;
+        const r = i % 2 === 0 ? outerR : innerR;
+        pts.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
+    }
+    return pts;
+}
+
+function addShapeToCanvas(type, color, size, canvas, cW, cH) {
+    const cx = cW / 2, cy = cH / 2;
+    let obj;
+
+    switch (type) {
+        case 'rect':
+            obj = new fabric.Rect({ width: size * 1.6, height: size, fill: color });
+            break;
+        case 'roundrect':
+            obj = new fabric.Rect({ width: size * 1.6, height: size, rx: size * 0.15, ry: size * 0.15, fill: color });
+            break;
+        case 'circle':
+            obj = new fabric.Circle({ radius: size / 2, fill: color });
+            break;
+        case 'oval':
+            obj = new fabric.Ellipse({ rx: size * 0.75, ry: size * 0.45, fill: color });
+            break;
+        case 'triangle':
+            obj = new fabric.Triangle({ width: size, height: size, fill: color });
+            break;
+        case 'star':
+            obj = new fabric.Polygon(starPoints(size / 2, size / 4, 5), { fill: color });
+            break;
+        default:
+            return;
+    }
+
+    obj.set({ left: cx, top: cy, originX: 'center', originY: 'center', selectable: true, hasControls: true });
+    canvas.add(obj);
+    canvas.setActiveObject(obj);
+    canvas.renderAll();
+}
+
 function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
     if (printingColor.toLowerCase() === 'none') {
         fabric.Image.fromURL(logoImg.src, function (logoFabricImg) {

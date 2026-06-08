@@ -100,6 +100,45 @@
                     <button type="button" id="addTextBtn">+ Add Text to Canvas</button>
                 </div>
 
+                <div class="shapes-section">
+                    <label>Shapes &amp; Icons</label>
+                    <div class="shape-controls">
+                        <div class="text-opt-item">
+                            <label for="shapeColor">Color</label>
+                            <input type="color" id="shapeColor" value="#000000">
+                        </div>
+                        <div class="text-opt-item text-opt-size">
+                            <label for="shapeSize">Size</label>
+                            <select id="shapeSize">
+                                <option value="30">Small</option>
+                                <option value="50" selected>Medium</option>
+                                <option value="70">Large</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="shapes-category">Basic Shapes</p>
+                    <div class="shapes-grid" id="basicShapesGrid">
+                        <button type="button" class="shape-btn" data-shape="rect" title="Rectangle">
+                            <svg viewBox="0 0 40 40" fill="currentColor"><rect x="4" y="11" width="32" height="18"/></svg>
+                        </button>
+                        <button type="button" class="shape-btn" data-shape="roundrect" title="Rounded Rectangle">
+                            <svg viewBox="0 0 40 40" fill="currentColor"><rect x="4" y="11" width="32" height="18" rx="6"/></svg>
+                        </button>
+                        <button type="button" class="shape-btn" data-shape="circle" title="Circle">
+                            <svg viewBox="0 0 40 40" fill="currentColor"><circle cx="20" cy="20" r="15"/></svg>
+                        </button>
+                        <button type="button" class="shape-btn" data-shape="oval" title="Oval">
+                            <svg viewBox="0 0 40 40" fill="currentColor"><ellipse cx="20" cy="20" rx="18" ry="11"/></svg>
+                        </button>
+                        <button type="button" class="shape-btn" data-shape="triangle" title="Triangle">
+                            <svg viewBox="0 0 40 40" fill="currentColor"><polygon points="20,4 37,36 3,36"/></svg>
+                        </button>
+                        <button type="button" class="shape-btn" data-shape="star" title="Star">
+                            <svg viewBox="0 0 40 40" fill="currentColor"><polygon points="20,3 24,14 36,14 27,21 30,33 20,26 10,33 13,21 4,14 16,14"/></svg>
+                        </button>
+                    </div>
+                </div>
+
                 <div class="mybuttons">
                     <button type="button" id="generateBtn" class="generatebutton">Generate</button>
 

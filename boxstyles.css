@@ -286,6 +286,92 @@ input[type="color"]#textColor:hover {
     transform: translateY(0);
 }
 
+/* ── Shapes & Icons section ── */
+.shapes-section {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1.5px solid var(--border);
+}
+
+.shapes-section > label:first-child {
+    margin-top: 0;
+}
+
+.shape-controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+input[type="color"]#shapeColor {
+    width: 44px;
+    height: 38px;
+    padding: 3px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    background: none;
+    display: block;
+}
+
+input[type="color"]#shapeColor:hover {
+    border-color: #94a3b8;
+}
+
+.shapes-category {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-top: 14px;
+    margin-bottom: 8px;
+}
+
+.shapes-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 6px;
+}
+
+.shape-btn {
+    width: 100%;
+    aspect-ratio: 1;
+    padding: 7px;
+    background: var(--white);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text);
+    transition: border-color 140ms, background 140ms, transform 140ms;
+    box-shadow: none;
+    margin: 0;
+    line-height: 1;
+    font-size: 0;
+}
+
+.shape-btn:hover {
+    border-color: var(--blue);
+    background: var(--blue-xlight);
+    color: var(--blue);
+    transform: scale(1.07);
+    box-shadow: none;
+}
+
+.shape-btn:active {
+    transform: scale(0.96);
+}
+
+.shape-btn svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
 /* ── Action buttons ── */
 .mybuttons {
     display: flex;
