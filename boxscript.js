@@ -306,8 +306,44 @@ function showErrorModal() {
     setTimeout(resetForm, 2000);
 }
 
+// Temporarily adds a size annotation near each selectable object (logo, text, shapes).
+// Returns the list of added labels so they can be removed after capture.
+function addTempSizeLabels(canvas) {
+    var labels = [];
+    canvas.getObjects().filter(function (o) { return o.selectable; }).forEach(function (obj) {
+        var pxW = Math.round(obj.width * obj.scaleX * 3);
+        var pxH = Math.round(obj.height * obj.scaleY * 3);
+        var mmW = Math.round((pxW / 300) * 25.4);
+        var mmH = Math.round((pxH / 300) * 25.4);
+        var b   = obj.getBoundingRect(true);
+        var top = b.top >= 15 ? b.top - 15 : b.top + 2;
+        var lbl = new fabric.Text(pxW + '\xd7' + pxH + ' px  (~' + mmW + '\xd7' + mmH + ' mm)', {
+            left: Math.max(2, b.left),
+            top: top,
+            fontSize: 9,
+            fill: '#ffffff',
+            fontFamily: 'Arial',
+            backgroundColor: 'rgba(0,0,0,0.68)',
+            padding: 2,
+            selectable: false,
+            evented: false,
+        });
+        canvas.add(lbl);
+        labels.push(lbl);
+    });
+    canvas.renderAll();
+    return labels;
+}
+
+function removeTempSizeLabels(canvas, labels) {
+    labels.forEach(function (l) { canvas.remove(l); });
+    canvas.renderAll();
+}
+
 function downloadImage(canvas, filename) {
+    var labels = addTempSizeLabels(canvas);
     const dataURL = canvas.toDataURL({ format: 'png', multiplier: 3 });
+    removeTempSizeLabels(canvas, labels);
     const link = document.createElement('a');
     link.href = dataURL;
     link.download = filename;
@@ -315,7 +351,9 @@ function downloadImage(canvas, filename) {
 }
 
 function downloadSVG(canvas, filename) {
+    var labels = addTempSizeLabels(canvas);
     const svgData = canvas.toSVG();
+    removeTempSizeLabels(canvas, labels);
     const blob = new Blob([svgData], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
