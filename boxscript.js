@@ -238,6 +238,10 @@ document.getElementById('generateBtn').addEventListener('click', function () {
         generatedCanvas1 = canvas1;
 
         loadImage(png1, jpg1, function (boxImg1) {
+            // physInchPerPx: how many physical inches one canvas pixel represents,
+            // based on the source image dimensions at an assumed 300 DPI print resolution.
+            canvas1._physInchPerPx = boxImg1.naturalWidth / (300 * 300);
+
             fabric.Image.fromURL(boxImg1.src, function (boxImg1Fabric) {
                 boxImg1Fabric.scaleToWidth(300);
                 boxImg1Fabric.scaleToHeight(300);
@@ -254,6 +258,8 @@ document.getElementById('generateBtn').addEventListener('click', function () {
                     });
                     generatedCanvas2 = canvas2;
                     generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
+                    // Die image is larger (1840×3350 etc.) — gives accurate physical die dimensions.
+                    canvas2._physInchPerPx = boxImg2.naturalWidth / (300 * canvas2Width);
 
                     fabric.Image.fromURL(boxImg2.src, function (boxImg2Fabric) {
                         const scale = Math.min(canvas2Width / boxImg2.naturalWidth, canvas2Height / boxImg2.naturalHeight);
@@ -311,12 +317,11 @@ function showErrorModal() {
 function addTempSizeLabels(canvas) {
     var labels = [];
     canvas.getObjects().filter(function (o) { return o.selectable; }).forEach(function (obj) {
-        var pxW = Math.round(obj.width * obj.scaleX * 3);
-        var pxH = Math.round(obj.height * obj.scaleY * 3);
-        var cmW = (pxW / 300 * 2.54).toFixed(1);
-        var cmH = (pxH / 300 * 2.54).toFixed(1);
-        var inW = (pxW / 300).toFixed(2);
-        var inH = (pxH / 300).toFixed(2);
+        var ppm = canvas._physInchPerPx || (1 / 90);
+        var inW = (obj.width  * obj.scaleX * ppm).toFixed(2);
+        var inH = (obj.height * obj.scaleY * ppm).toFixed(2);
+        var cmW = (inW * 2.54).toFixed(1);
+        var cmH = (inH * 2.54).toFixed(1);
         var b   = obj.getBoundingRect(true);
         var top = b.top >= 15 ? b.top - 15 : b.top + 2;
         var lbl = new fabric.Text(cmW + '\xd7' + cmH + ' cm  (' + inW + '\xd7' + inH + ' in)', {
@@ -423,13 +428,12 @@ function addSizeLabel(fabricObj, canvas, canvasWidth, canvasHeight) {
 
 function updateCanvasLabel(canvas, obj) {
     if (!canvas._sizeLabel || !obj) return;
-    const pxW = Math.round(obj.width * obj.scaleX * 3);
-    const pxH = Math.round(obj.height * obj.scaleY * 3);
-    const cmW = (pxW / 300 * 2.54).toFixed(1);
-    const cmH = (pxH / 300 * 2.54).toFixed(1);
-    const inW = (pxW / 300).toFixed(2);
-    const inH = (pxH / 300).toFixed(2);
-    canvas._sizeLabel.set('text', `Size: ${cmW} × ${cmH} cm  |  ${inW} × ${inH} in  (@ 300 DPI)`);
+    const ppm = canvas._physInchPerPx || (1 / 90);
+    const inW = (obj.width  * obj.scaleX * ppm).toFixed(2);
+    const inH = (obj.height * obj.scaleY * ppm).toFixed(2);
+    const cmW = (inW * 2.54).toFixed(1);
+    const cmH = (inH * 2.54).toFixed(1);
+    canvas._sizeLabel.set('text', `Size: ${cmW} × ${cmH} cm  |  ${inW} × ${inH} in`);
     canvas.requestRenderAll();
 }
 
