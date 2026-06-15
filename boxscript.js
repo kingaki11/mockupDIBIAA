@@ -281,11 +281,19 @@ document.getElementById('generateBtn').addEventListener('click', function () {
 
 document.getElementById('resetBtn').addEventListener('click', resetForm);
 
+function getFileBaseName() {
+    const t = boxTypeSelect.value;
+    const s = boxStyleSelect.value;
+    const c = boxColorSelect.value;
+    return (t + '_' + s + '_' + c).toLowerCase().replace(/\s+/g, '_');
+}
+
 // PNG download: exports both canvases at 3× resolution
 document.getElementById('downloadPNG').addEventListener('click', function () {
     if (!generatedCanvas1 || !generatedCanvas2) return;
-    downloadImage(generatedCanvas1, 'box_mockup.png');
-    downloadImage(generatedCanvas2, 'die_template.png');
+    const base = getFileBaseName();
+    downloadImage(generatedCanvas1, base + '_mockup.png');
+    downloadImage(generatedCanvas2, base + '_die.png');
     successmsg();
     setTimeout(resetForm, 2000);
 });
@@ -293,8 +301,9 @@ document.getElementById('downloadPNG').addEventListener('click', function () {
 // SVG download: exports both canvases as SVG (opens in CorelDRAW / Illustrator)
 document.getElementById('downloadSVG').addEventListener('click', function () {
     if (!generatedCanvas1 || !generatedCanvas2) return;
-    downloadSVG(generatedCanvas1, 'box_mockup.svg');
-    downloadSVG(generatedCanvas2, 'die_template.svg');
+    const base = getFileBaseName();
+    downloadSVG(generatedCanvas1, base + '_mockup.svg');
+    downloadSVG(generatedCanvas2, base + '_die.svg');
     successmsg();
     setTimeout(resetForm, 2000);
 });
