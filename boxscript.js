@@ -28,6 +28,14 @@ const boxStyleLabels = {
     slidingbox: "Sliding Box",
 };
 
+const boxDimensions = {
+    ringbox:    { magnetic:       '2 × 2 × 1.5 in' },
+    banglebox:  { magnetic:       '4 × 4 × 1.5 in' },
+    earringbox: { magnetic:       '2.5 × 3.25 × 1.5 in' },
+    pendantbox: { magnetic:       '5 × 6 × 1.5 in',
+                  'top-bottom':   '5 × 6 × 1.5 in' },
+};
+
 const boxColorLabels = {
     black: "Black",
     blue: "Blue",
@@ -325,6 +333,29 @@ function showErrorModal() {
 // Returns the list of added labels so they can be removed after capture.
 function addTempSizeLabels(canvas) {
     var labels = [];
+
+    // Box info banner at the top of the canvas
+    var dimStr = (boxDimensions[boxTypeSelect.value] || {})[boxStyleSelect.value];
+    if (dimStr) {
+        var typeName  = boxTypeLabels[boxTypeSelect.value]  || boxTypeSelect.value;
+        var styleName = boxStyleLabels[boxStyleSelect.value] || boxStyleSelect.value;
+        var colorName = boxColorLabels[boxColorSelect.value] || boxColorSelect.value;
+        var boxInfoText = typeName + '  •  ' + styleName + '  •  ' + colorName + '   |   Box Size: ' + dimStr;
+        var boxLbl = new fabric.Text(boxInfoText, {
+            left: canvas.width / 2,
+            top: 3,
+            originX: 'center',
+            fontSize: 8,
+            fill: '#ffffff',
+            fontFamily: 'Arial',
+            backgroundColor: 'rgba(0,0,0,0.72)',
+            padding: 3,
+            selectable: false,
+            evented: false,
+        });
+        canvas.add(boxLbl);
+        labels.push(boxLbl);
+    }
     canvas.getObjects().filter(function (o) { return o.selectable; }).forEach(function (obj) {
         var ppm = canvas._physInchPerPx || (1 / 90);
         var inW = (obj.width  * obj.scaleX * ppm).toFixed(2);
