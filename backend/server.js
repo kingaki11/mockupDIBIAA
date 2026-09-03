@@ -368,6 +368,24 @@ function floodFillBackgroundAlpha(image) {
     return image;
 }
 
+// Forces every visible pixel to pure black while leaving alpha untouched.
+//
+// The prompt already asks for flat black, but a generative model is not a
+// guarantee — it sometimes returns the original gold, or black with a faint
+// metallic sheen. Alpha carries the shape, so overwriting only the colour
+// channels turns whatever came back into a solid black version of exactly that
+// shape, with anti-aliased edges intact. That makes black output certain rather
+// than likely, and it is what single-colour box printing needs.
+async function forceBlack(buffer) {
+    const image = await Jimp.read(buffer);
+    const { data } = image.bitmap;
+    for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] === 0) continue;
+        data[i] = 0; data[i + 1] = 0; data[i + 2] = 0;
+    }
+    return image.getBufferAsync(Jimp.MIME_PNG);
+}
+
 // One background-removal path shared by the mockup tab and the converter, so
 // both tabs always agree on what counts as background.
 async function cutoutToPng(buffer, maxEdge = CUTOUT_MAX_LONG_EDGE) {
@@ -567,12 +585,13 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 { width: probe.bitmap.width, height: probe.bitmap.height },
                 OPENAI_TIMEOUT_MS,
             );
-            sourceBuffer = enhanced.buffer;
+            sourceBuffer = await forceBlack(enhanced.buffer);
             sourceMime = 'image/png';
             enhanceMeta = enhanced.meta;
             // Returned so the UI can show the redraw beside the original — the
             // whole point being that the user sees what the model changed.
-            enhancedDataUrl = 'data:image/png;base64,' + enhanced.buffer.toString('base64');
+            // Preview the blackened version, so what is shown is what gets traced.
+            enhancedDataUrl = 'data:image/png;base64,' + sourceBuffer.toString('base64');
         } catch (aiErr) {
             const reasons = {
                 ENOKEY: 'AI clean-up is not configured on the server',

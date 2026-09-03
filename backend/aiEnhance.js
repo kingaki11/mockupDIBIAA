@@ -24,11 +24,19 @@ const RATE_TEXT_INPUT_PER_M = 5;
 const RATE_IMAGE_INPUT_PER_M = 10;
 const RATE_IMAGE_OUTPUT_PER_M = 40;
 
+// Flat black, not the original colours. Two reasons. It is what the artwork is
+// for — single-colour printing on boxes — and it also traces far better: a gold
+// gradient gets quantised into dozens of colour bands, so the vector visibly
+// drifts from the image it was traced from, while flat black comes back as
+// clean single-colour paths.
 const PROMPT = [
-    'Redraw this exact logo as a clean, sharp, high-resolution graphic.',
-    'Keep the lettering, wording, spelling, typeface, proportions and colours identical to the original.',
-    'Remove the background completely so the artwork sits on transparency.',
-    'Do not add, remove, restyle or reposition any element. Do not add effects, shadows or borders.',
+    'Redraw this exact logo as flat, solid black artwork on a fully transparent background.',
+    'Keep the lettering, wording, spelling, typeface, proportions, spacing and layout identical to the original,',
+    'including every decorative element such as sparkles, stars, rules and sub-text.',
+    'Render everything in pure solid black (#000000).',
+    'No gradients, no gold, no metallic effect, no shading, no highlights, no 3D bevel, no drop shadow, no outline.',
+    'Enclosed areas inside letters must stay fully transparent, not filled.',
+    'The result must look like a clean single-colour vector logo ready for printing.',
 ].join(' ');
 
 // gpt-image-1 only accepts these three sizes, so pick the one matching the

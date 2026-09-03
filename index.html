@@ -328,17 +328,18 @@
             <div class="admin-card">
                 <h2>Convert to Vector</h2>
                 <p class="admin-card-hint">
-                    Removes the background, redraws the artwork sharper with AI, then traces it into real,
-                    editable vector paths &mdash; not an embedded bitmap.
+                    Removes the background, redraws the artwork in solid black with AI, then traces it into
+                    real, editable vector paths &mdash; not an embedded bitmap. Single-colour black is what
+                    box printing needs, and it traces far more cleanly than a gradient.
                     <strong>In CorelDRAW, import the .svg</strong> (File &rarr; Import), then File &rarr;
                     Save As &rarr; .cdr for a true CorelDRAW file. A genuine .cdr can only be written by
                     CorelDRAW itself.
                 </p>
 
                 <p class="convert-warn">
-                    <strong>The AI redraws the artwork.</strong> Wording, colours and layout stay the same, but
-                    letterforms can come back slightly different &mdash; check the comparison below before you
-                    download. Roughly $0.07 a conversion.
+                    <strong>The AI redraws the artwork.</strong> Wording, layout, sparkles and sub-text are kept,
+                    and everything comes out solid black &mdash; but letterforms can come back slightly different.
+                    Check the comparison below before you download. Roughly $0.07 a conversion.
                 </p>
 
                 <button type="button" id="convertBtn" class="admin-btn-primary">Convert to Vector</button>
@@ -351,7 +352,7 @@
                             <div id="convertOriginal" class="convert-preview"></div>
                         </figure>
                         <figure class="convert-figure" id="enhancedFigure" style="display:none;">
-                            <figcaption>AI cleaned up</figcaption>
+                            <figcaption>AI redrawn &mdash; black</figcaption>
                             <div id="convertEnhanced" class="convert-preview"></div>
                         </figure>
                         <figure class="convert-figure">
