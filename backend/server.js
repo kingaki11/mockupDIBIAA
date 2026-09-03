@@ -640,6 +640,18 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 console.warn('Could not pre-read logo text:', textErr.message);
             }
 
+            // Some scripts are simply out of reach: the image model cannot draw
+            // them and the vision model cannot read them well enough to catch it
+            // when it fails. Attempting a redraw there burns two generations and
+            // then falls back anyway, so skip straight to tracing the original,
+            // which reproduces every glyph exactly.
+            if (aiEnhance.hasNonLatinScript(exactText)) {
+                enhanceError = 'your logo uses a script the AI redraw cannot reproduce reliably, '
+                    + 'so your original was traced instead — every character is exactly as you supplied it';
+                console.warn('AI redraw skipped — non-Latin script detected:', JSON.stringify(exactText).slice(0, 80));
+                throw { code: 'ESKIP' };
+            }
+
             // Then check the wording actually survived. A redraw that silently
             // drops a letter is worse than no redraw at all — it is a corrupted
             // brand mark that still looks plausible. So try twice, and if the
@@ -681,6 +693,7 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                     attempts: attempts.length,
                     expectedText: exactText || null,
                     verified: accepted.check ? accepted.check.textMatches : null,
+                    confident: accepted.check ? accepted.check.confident : null,
                     shapesMatch: accepted.check ? accepted.check.shapesMatch : null,
                 };
                 // Preview the blackened version, so what is shown is what gets traced.
@@ -692,13 +705,17 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 console.warn('AI redraw rejected after', attempts.length, 'attempts —', enhanceError);
             }
         } catch (aiErr) {
-            const reasons = {
-                ENOKEY: 'AI clean-up is not configured on the server',
-                EBADKEY: 'the AI service rejected our API key',
-                ETIMEDOUT: 'the AI clean-up timed out',
-            };
-            enhanceError = reasons[aiErr.code] || ('the AI clean-up failed: ' + aiErr.message);
-            console.warn('AI enhancement skipped —', enhanceError);
+            if (aiErr && aiErr.code === 'ESKIP') {
+                // Deliberate skip; enhanceError already explains why.
+            } else {
+                const reasons = {
+                    ENOKEY: 'AI clean-up is not configured on the server',
+                    EBADKEY: 'the AI service rejected our API key',
+                    ETIMEDOUT: 'the AI clean-up timed out',
+                };
+                enhanceError = reasons[aiErr.code] || ('the AI clean-up failed: ' + aiErr.message);
+                console.warn('AI enhancement skipped —', enhanceError);
+            }
         }
     }
 

@@ -73,6 +73,23 @@ function isConfigured() {
     return Boolean(process.env.OPENAI_API_KEY);
 }
 
+// Scripts the image model cannot draw and the vision model cannot reliably read.
+//
+// A Gujarati jewellery logo came back with three corrupted words — રાણીંગા became
+// રાશીંગા, જવેલર્સ became જ્બેલર્સ — and the verifier still passed it, because its own
+// transcription of the original was already wrong. A verifier that cannot read the
+// script cannot police it, and a confident "wording checked" on corrupted text is
+// worse than no check at all.
+//
+// So anything outside Latin skips the redraw entirely. Tracing the original keeps
+// every glyph exactly as supplied, costs nothing, and is the better output anyway.
+// Common and Inherited cover digits, punctuation and combining marks, which appear
+// in Latin logos too.
+function hasNonLatinScript(text) {
+    if (!text) return false;
+    return /[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(text);
+}
+
 async function chatJson(messages, timeoutMs) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -140,10 +157,12 @@ async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
             { type: 'text', text:
                 'IMAGE 1 is an original logo. IMAGE 2 is a redraw of it. Compare them strictly. '
                 + 'Reply as JSON: {"text1":"<exact text in image 1>","text2":"<exact text in image 2>",'
-                + '"text_matches":true|false,"shapes_match":true|false}. '
+                + '"text_matches":true|false,"shapes_match":true|false,"confident":true|false}. '
                 + 'text_matches must be false if the wording differs by even one character, '
                 + 'including a single missing or added letter. '
-                + 'shapes_match must be false if any non-text symbol, icon or mark differs in form.' },
+                + 'shapes_match must be false if any non-text symbol, icon or mark differs in form. '
+                + 'confident must be false if you cannot read the script in either image reliably enough '
+                + 'to be sure of every character — never guess.' },
             imagePart(originalBuf, originalMime),
             imagePart(redrawBuf, 'image/png'),
         ],
@@ -151,8 +170,11 @@ async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
     return {
         text1: data.text1 || '',
         text2: data.text2 || '',
-        textMatches: data.text_matches !== false,
+        // Unreadable script is treated as a failed check, not a pass. The Gujarati
+        // case passed precisely because an unsure verifier defaulted to yes.
+        textMatches: data.text_matches !== false && data.confident !== false,
         shapesMatch: data.shapes_match !== false,
+        confident: data.confident !== false,
     };
 }
 
@@ -240,6 +262,7 @@ module.exports = {
     enhanceImage,
     readLogoText,
     verifyRedraw,
+    hasNonLatinScript,
     isConfigured,
     DEFAULT_MODEL,
     DEFAULT_QUALITY,
