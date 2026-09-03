@@ -386,6 +386,55 @@ async function forceBlack(buffer) {
     return image.getBufferAsync(Jimp.MIME_PNG);
 }
 
+// True when the image already carries a real alpha channel — an AI redraw always
+// does. Such an image needs no background detection at all: transparency IS the
+// answer, and running colour-distance masking over it can only damage it.
+function hasUsableAlpha(image) {
+    const { width: w, height: h, data } = image.bitmap;
+    const total = w * h;
+    let transparent = 0;
+    for (let p = 0; p < total; p++) if (data[p * 4 + 3] < 128) transparent++;
+    return transparent / total >= 0.05;
+}
+
+// True when the visible artwork is effectively one colour, which decides the
+// tracer. A single-colour image belongs to potrace: it fits one path with proper
+// curve optimisation, whereas VTracer's colour clustering treats each
+// anti-aliasing gradation as its own region and emits thousands of stacked
+// slivers. Measured on an AI-blackened logo: potrace 1 path / 15.5KB / IoU
+// 0.983, VTracer 2014 paths / 196KB.
+function isEffectivelyMonochrome(image) {
+    const { width: w, height: h, data } = image.bitmap;
+    const total = w * h;
+    const step = Math.max(1, Math.floor(total / 40000));
+    let n = 0, sr = 0, sg = 0, sb = 0;
+    for (let p = 0; p < total; p += step) {
+        const i = p * 4;
+        if (data[i + 3] < 128) continue;
+        sr += data[i]; sg += data[i + 1]; sb += data[i + 2]; n++;
+    }
+    if (n < 16) return false;
+    const mr = sr / n, mg = sg / n, mb = sb / n;
+    let spread = 0, c = 0;
+    for (let p = 0; p < total; p += step) {
+        const i = p * 4;
+        if (data[i + 3] < 128) continue;
+        const dr = data[i] - mr, dg = data[i + 1] - mg, db = data[i + 2] - mb;
+        spread += Math.sqrt(dr * dr + dg * dg + db * db);
+        c++;
+    }
+    return (spread / Math.max(1, c)) < 40;
+}
+
+// Flattens transparency onto white so potrace sees plain black-on-white with its
+// anti-aliasing intact as grey. This also removes the background implicitly —
+// transparent becomes white, and white is not traced.
+async function flattenOntoWhite(image) {
+    const flat = new Jimp(image.bitmap.width, image.bitmap.height, 0xffffffff);
+    flat.composite(image, 0, 0);
+    return flat.getBufferAsync(Jimp.MIME_PNG);
+}
+
 // One background-removal path shared by the mockup tab and the converter, so
 // both tabs always agree on what counts as background.
 async function cutoutToPng(buffer, maxEdge = CUTOUT_MAX_LONG_EDGE) {
@@ -603,40 +652,81 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
         }
     }
 
-    let raster;
+    let raster;          // PNG with alpha, for VTracer
+    let flattened;       // PNG on white, for potrace
     let sourceSize;
+    let monochrome = false;
+    let maskedBackground = false;
     try {
-        if (wantsCutout) {
+        let image = await Jimp.read(sourceBuffer);
+
+        // Only infer the background when there is no alpha to read. An AI redraw
+        // arrives already cut out, and putting it through colour-distance masking
+        // was the cause of the patches: on one 1536x1024 redraw the mask filled 90
+        // enclosed holes — letter counters — and deleted 297 small components,
+        // sparkle tips and the like, before anything was even traced.
+        if (wantsCutout && !hasUsableAlpha(image)) {
             raster = await cutoutToPng(sourceBuffer, VTRACER_MAX_EDGE);
-            const decoded = await Jimp.read(raster);
-            sourceSize = { width: decoded.bitmap.width, height: decoded.bitmap.height };
+            image = await Jimp.read(raster);
+            maskedBackground = true;
         } else {
-            const image = await Jimp.read(sourceBuffer);
             const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
             if (longEdge > VTRACER_MAX_EDGE) {
                 image.scale(VTRACER_MAX_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
             }
-            sourceSize = { width: image.bitmap.width, height: image.bitmap.height };
             raster = await image.getBufferAsync(Jimp.MIME_PNG);
         }
+
+        sourceSize = { width: image.bitmap.width, height: image.bitmap.height };
+        monochrome = isEffectivelyMonochrome(image);
+        if (monochrome) flattened = await flattenOntoWhite(image);
     } catch (readErr) {
         console.warn('Rejected unreadable upload:', readErr.message);
         return res.status(400).json({ error: 'Could not read that image file.', detail: readErr.message });
     }
 
     try {
-        const { svg, ms } = await vectorizeToSvg(raster, opts, VTRACER_TIMEOUT_MS);
+        let svg;
+        let eps = null;
+        let ms;
+        let engine;
+
+        if (monochrome) {
+            // Single colour: potrace fits one optimised path, and svgToEps can
+            // convert that, so an EPS comes back for free.
+            engine = 'potrace';
+            const started = Date.now();
+            svg = await new Promise((resolve, reject) => {
+                potrace.trace(flattened, {
+                    ...MAX_DETAIL_TRACE_OPTIONS,
+                    color: '#000000',
+                    threshold: 128,
+                    blackOnWhite: true,
+                }, (err, out) => (err ? reject(err) : resolve(out)));
+            });
+            ms = Date.now() - started;
+            try {
+                eps = potraceSvgToEps(svg);
+            } catch (epsErr) {
+                console.warn('EPS conversion skipped:', epsErr.message);
+            }
+        } else {
+            engine = 'vtracer';
+            const traced = await vectorizeToSvg(raster, opts, VTRACER_TIMEOUT_MS);
+            svg = traced.svg;
+            ms = traced.ms;
+        }
+
         res.json({
             svg,
-            // EPS is monochrome-only in svgToEps.js, so it is not offered for
-            // colour output. Documented as out of scope for this pass.
-            eps: null,
+            eps,
             enhancedPng: enhancedDataUrl,
             meta: {
-                engine: 'vtracer',
+                engine,
                 ms,
-                backgroundRemoved: wantsCutout,
-                options: opts,
+                backgroundRemoved: maskedBackground || wantsCutout,
+                monochrome,
+                options: monochrome ? null : opts,
                 size: sourceSize,
                 aiEnhance: enhanceMeta,
                 aiEnhanceError: enhanceError,

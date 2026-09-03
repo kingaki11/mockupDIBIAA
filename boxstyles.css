@@ -770,8 +770,12 @@ h2 {
 
 .convert-preview {
     width: 100%;
-    aspect-ratio: 1;
-    max-height: 260px;
+    /* A logo is usually far wider than it is tall, so a square pane letterboxed
+       it into a strip too small to judge the trace by. 4:3 with real height
+       gives the artwork most of the pane. */
+    aspect-ratio: 4 / 3;
+    min-height: 170px;
+    max-height: 340px;
     background: repeating-conic-gradient(#e2e8f0 0% 25%, white 0% 50%) 0 0 / 16px 16px;
     border: 1.5px solid var(--border);
     border-radius: var(--radius-sm);
@@ -785,6 +789,10 @@ h2 {
 .convert-preview svg {
     max-width: 100%;
     max-height: 100%;
+    height: auto;
+    /* Vector, so it stays sharp at any size — but be explicit about it rather
+       than inheriting whatever smoothing the browser picks for the fallback. */
+    shape-rendering: geometricPrecision;
 }
 
 .convert-download-row {
@@ -853,8 +861,9 @@ h2 {
 /* Result: original beside vector */
 .convert-compare {
     display: grid;
-    /* Two panes normally, three when the AI clean-up pane is shown. */
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    /* Three panes where there is room; drops to two, then one, rather than
+       squeezing all three down to thumbnails. */
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
     gap: 14px;
 }
 
@@ -1093,6 +1102,13 @@ h2 {
     max-width: 640px;
     margin: 18px auto 0;
     padding: 0 16px 56px;
+}
+
+/* The converter shows a three-up comparison, so it needs more width than the
+   form-based panels. 640px left each pane about 190px, too small to see whether
+   the trace was any good — which was the whole point of showing it. */
+#convertPanel {
+    max-width: 1100px;
 }
 
 .admin-panel.admin-panel-open {
