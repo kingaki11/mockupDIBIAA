@@ -32,7 +32,7 @@ const PATH_MODE_SPLINE = 2;
 // 23.7s is close enough to the timeout to fail intermittently. So large inputs
 // are downscaled before tracing — a logo is never affected, and a photo loses
 // nothing that survives vectorisation anyway.
-const DEFAULT_MAX_EDGE = 1400;
+const DEFAULT_MAX_EDGE = 2000;
 
 const DEFAULTS = {
     colorPrecision: 6,

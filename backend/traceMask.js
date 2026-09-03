@@ -200,22 +200,50 @@ function largestComponentStats(mask, bitmap) {
     const bboxH = maxY - minY + 1;
     const n = best.pixels.length;
     r /= n; g /= n; b /= n;
-    // Uniformity is measured on the region's OUTER EDGE, not the whole region.
-    // A background panel's rim is pure panel colour no matter how much artwork
+    // Uniformity is measured on the region's EDGE, not the whole region. A
+    // background panel's rim is pure panel colour no matter how much artwork
     // sits in the middle of it; measuring the whole region instead makes a
     // panel with large artwork on it look "non-uniform" and slip through.
+    //
+    // But the outermost ring is the wrong ring to measure. Any resampling —
+    // downscaling a large upload, upscaling a small one — turns the crisp
+    // margin/panel boundary into a colour ramp one or two pixels wide, and that
+    // ramp lands squarely on the outer ring. Its colours then span the whole
+    // margin-to-panel range, the spread blows past PANEL_MAX_COLOR_SPREAD, and
+    // the panel stops being recognised as background. That made panel removal
+    // depend on the arbitrary resolution the image happened to be scaled to.
+    // So peel a couple of rings off first and sample inside the panel instead.
     const inRegion = new Uint8Array(total);
     for (const p of best.pixels) inRegion[p] = 1;
-    const edge = [];
-    for (const p of best.pixels) {
-        const x = p % w, y = (p - x) / w;
-        const outside =
-            (x === 0 || !inRegion[p - 1]) ||
-            (x === w - 1 || !inRegion[p + 1]) ||
-            (y === 0 || !inRegion[p - w]) ||
-            (y === h - 1 || !inRegion[p + w]);
-        if (outside) edge.push(p);
-    }
+
+    const ringAt = (depth) => {
+        const current = new Uint8Array(inRegion);
+        let ring = [];
+        for (let d = 0; d <= depth; d++) {
+            ring = [];
+            for (const p of best.pixels) {
+                if (!current[p]) continue;
+                const x = p % w, y = (p - x) / w;
+                const outside =
+                    (x === 0 || !current[p - 1]) ||
+                    (x === w - 1 || !current[p + 1]) ||
+                    (y === 0 || !current[p - w]) ||
+                    (y === h - 1 || !current[p + w]);
+                if (outside) ring.push(p);
+            }
+            if (d === depth) break;
+            // Peeling a thin region away entirely would leave nothing to measure,
+            // so stop early and use the innermost ring that still exists.
+            if (ring.length === 0) break;
+            let remaining = 0;
+            for (const p of best.pixels) if (current[p]) remaining++;
+            if (remaining - ring.length < 64) break;
+            for (const p of ring) current[p] = 0;
+        }
+        return ring;
+    };
+
+    const edge = ringAt(BOUNDARY_PEEL_DEPTH);
     let er = 0, eg = 0, eb = 0;
     for (const p of edge) {
         const i = p * 4;
@@ -309,6 +337,10 @@ const GUIDE_BACKGROUND_ALPHA = 60;
 const GUIDE_FOREGROUND_ALPHA = 200;
 // The true edge of a stroke sits halfway between background and solid artwork.
 const EDGE_MIDPOINT_FRACTION = 0.45;
+// How many pixel rings to peel off a region before sampling its colour, so the
+// sample sits inside the panel rather than on the resampling ramp at its edge.
+// Bicubic resampling smears a hard edge over roughly two pixels.
+const BOUNDARY_PEEL_DEPTH = 2;
 
 function buildGuidedMask(image, guide) {
     const { width: w, height: h, data } = image.bitmap;
