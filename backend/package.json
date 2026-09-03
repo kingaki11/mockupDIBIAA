@@ -1,0 +1,21 @@
+{
+  "name": "mockupdibiaa-backend",
+  "version": "1.0.0",
+  "description": "Server-side logo background removal API for the box mockup app",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@imgly/background-removal-node": "^1.4.5",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jimp": "^0.14.0",
+    "multer": "^1.4.5-lts.1",
+    "potrace": "^2.1.8"
+  }
+}

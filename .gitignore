@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Secrets and local environment
+.env*
+
+# Deploy tooling
+.vercel
+
+# Editor / OS / local tooling
+.DS_Store
+.claude/

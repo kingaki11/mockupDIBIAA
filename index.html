@@ -12,7 +12,30 @@
 </head>
 
 <body>
-    <div class="container">
+    <div id="loginScreen" class="login-screen">
+        <div class="login-card">
+            <div class="login-icon">📦</div>
+            <h1>Box Mockup Studio</h1>
+            <p class="login-sub">Sign in to create mockups and manage the box catalog.</p>
+            <label for="sitePassword">Password</label>
+            <input type="password" id="sitePassword" placeholder="••••••••" autocomplete="current-password">
+            <button type="button" id="siteLoginBtn" class="login-btn">Log In</button>
+            <div id="siteLoginMsg" class="login-msg"></div>
+        </div>
+    </div>
+
+    <div id="appContent" class="app-content" style="display:none;">
+        <div class="app-topbar">
+            <div class="app-tabbar" role="tablist">
+                <button type="button" class="app-tab active" data-tab="mockup">📦 Create Mockup</button>
+                <button type="button" class="app-tab" data-tab="fields">➕ Add Fields</button>
+                <button type="button" class="app-tab" data-tab="convert">🔄 Convert Logo</button>
+            </div>
+            <span id="siteLogoutLink" class="app-logout-link">Log out</span>
+        </div>
+
+        <div id="tabPanel-mockup" class="tab-panel">
+        <div class="container">
         <div class="form-container">
             <h1>Customize Your Box</h1>
             <form id="boxForm">
@@ -140,25 +163,25 @@
                     <p class="shapes-category">Social Media</p>
                     <div class="shapes-grid">
                         <button type="button" class="shape-btn" data-shape="fb" title="Facebook">
-                            <svg viewBox="0 0 100 100" fill="currentColor"><path d="M30,5 L70,5 L70,20 L45,20 L45,45 L65,45 L65,60 L45,60 L45,95 L30,95 Z"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>
                         </button>
                         <button type="button" class="shape-btn" data-shape="x" title="X / Twitter">
-                            <svg viewBox="0 0 100 100" fill="currentColor"><polygon points="8,10 42,52 8,90 24,90 50,64 76,90 92,90 58,48 92,10 76,10 50,36 24,10"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg>
                         </button>
                         <button type="button" class="shape-btn" data-shape="ig" title="Instagram">
-                            <svg viewBox="0 0 100 100" fill="currentColor"><path fill-rule="evenodd" d="M30,5 Q5,5 5,30 L5,70 Q5,95 30,95 L70,95 Q95,95 95,70 L95,30 Q95,5 70,5 Z M50,32 A18,18 0 1,0 50.01,32 Z"/><circle cx="75" cy="25" r="7"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg>
                         </button>
                         <button type="button" class="shape-btn" data-shape="wa" title="WhatsApp">
-                            <svg viewBox="0 0 100 100" fill="currentColor"><path d="M50,8 A42,42 0 0,0 8,50 A42,42 0 0,0 26,80 L16,92 L32,86 A42,42 0 0,0 50,92 A42,42 0 0,0 92,50 A42,42 0 0,0 50,8 Z"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
                         </button>
                         <button type="button" class="shape-btn" data-shape="yt" title="YouTube">
-                            <svg viewBox="0 0 100 100" fill="currentColor"><path fill-rule="evenodd" d="M12,20 Q5,20 5,28 L5,72 Q5,80 12,80 L88,80 Q95,80 95,72 L95,28 Q95,20 88,20 Z M40,36 L68,50 L40,64 Z"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
                         </button>
                         <button type="button" class="shape-btn" data-shape="tt" title="TikTok">
-                            <svg viewBox="0 0 100 100" fill="currentColor"><path d="M57,8 L57,64 A16,16 0 1,1 41,54 A16,16 0 0,1 57,64 L57,36 L80,24 L80,8 Z"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
                         </button>
                         <button type="button" class="shape-btn" data-shape="th" title="Threads">
-                            <svg viewBox="0 0 100 100" fill="currentColor"><path d="M50,5 A45,45 0 0,0 5,50 A45,45 0 0,0 50,95 L50,82 A32,32 0 0,1 18,50 A32,32 0 0,1 50,18 A32,32 0 0,1 82,50 L82,55 Q82,65 72,65 Q64,65 64,57 L64,35 A14,14 0 1,0 58,57 Q62,67 72,67 Q90,67 90,55 L90,50 A45,45 0 0,0 50,5 Z"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.964-.065-1.19.408-2.285 1.33-3.082.88-.76 2.119-1.207 3.583-1.291a13.853 13.853 0 0 1 3.02.142c-.126-.742-.375-1.332-.75-1.757-.513-.586-1.308-.883-2.359-.89h-.029c-.844 0-1.992.232-2.721 1.32L7.734 7.847c.98-1.454 2.568-2.256 4.478-2.256h.044c3.194.02 5.097 1.975 5.287 5.388.108.046.216.094.321.142 1.49.7 2.58 1.761 3.154 3.07.797 1.82.871 4.79-1.548 7.158-1.85 1.81-4.094 2.628-7.277 2.65Zm1.003-11.69c-.242 0-.487.007-.739.021-1.836.103-2.98.946-2.916 2.143.067 1.256 1.452 1.839 2.784 1.767 1.224-.065 2.818-.543 3.086-3.71a10.5 10.5 0 0 0-2.215-.221z"/></svg>
                         </button>
                     </div>
                     <p class="shapes-category">Packaging Symbols</p>
@@ -185,7 +208,7 @@
                 </div>
 
                 <div class="mybuttons">
-                    <button type="button" id="generateBtn" class="generatebutton">Generate</button>
+                    <button type="button" id="generateBtn" class="generatebutton">Create Mockup</button>
 
                     <button type="button" id="resetBtn">Reset</button>
                 </div>
@@ -209,12 +232,123 @@
             <div id="downloadArea" style="display: none;">
                 <button id="downloadPNG" class="download-button">Download PNG</button>
                 <button id="downloadSVG" class="download-button">Download SVG <span class="svg-note">(CorelDRAW / Illustrator)</span></button>
+                <p class="logo-pos-hint">Logo off-center? Drag it into place on the Box and/or Die preview above, then:</p>
+                <button type="button" id="saveLogoPosBtn" class="logo-pos-button">📍 Save This Logo Position</button>
+                <div id="saveLogoPosMsg" class="admin-msg"></div>
             </div>
         </div>
+        </div>
+        </div>
+
+        <!-- ── Add Fields: catalog management (box types/styles/colors, printing colors) ──
+             Already inside the logged-in area above, so no separate password prompt here. -->
+        <div id="tabPanel-fields" class="tab-panel" style="display:none;">
+        <div id="adminPanel" class="admin-panel">
+            <div class="admin-card">
+                <h2>Printing Colors</h2>
+                <p class="admin-card-hint">Adds a new option to the "Printing Color" dropdown above.</p>
+
+                <label for="pcLabel">Color Name</label>
+                <input type="text" id="pcLabel" placeholder="e.g. Teal">
+
+                <label for="pcHex">Color</label>
+                <input type="color" id="pcHex" value="#000000">
+
+                <button type="button" id="pcSaveBtn" class="admin-btn-primary">Add Printing Color</button>
+                <div id="pcMsg" class="admin-msg"></div>
+
+                <div class="admin-list" id="pcList"></div>
+                <p class="admin-empty-hint" id="pcEmptyHint">No dashboard-added printing colors yet.</p>
+            </div>
+
+            <div class="admin-card">
+                <h2>Add Box Template</h2>
+                <p class="admin-card-hint">Type an existing Box Type/Style/Color to reuse it, or a new name to create it. Both images must be PNG. Once saved, it's immediately selectable in the Box Type/Style/Color dropdowns above.</p>
+
+                <div class="admin-row">
+                    <div>
+                        <label for="boxTypeLabel">Box Type</label>
+                        <input type="text" id="boxTypeLabel" list="typeSuggestions" placeholder="e.g. Ring Box">
+                        <datalist id="typeSuggestions"></datalist>
+                    </div>
+                    <div>
+                        <label for="boxStyleLabel">Box Style</label>
+                        <input type="text" id="boxStyleLabel" list="styleSuggestions" placeholder="e.g. Magnetic">
+                        <datalist id="styleSuggestions"></datalist>
+                    </div>
+                </div>
+                <div class="admin-row">
+                    <div>
+                        <label for="boxColorLabel">Box Color</label>
+                        <input type="text" id="boxColorLabel" list="colorSuggestions" placeholder="e.g. Teal">
+                        <datalist id="colorSuggestions"></datalist>
+                    </div>
+                    <div>
+                        <label for="boxDims">Dimensions</label>
+                        <input type="text" id="boxDims" placeholder="e.g. 2 × 2 × 1.5 in">
+                    </div>
+                </div>
+
+                <label for="mockupImage">Box Mockup Image (PNG)</label>
+                <input type="file" id="mockupImage" accept="image/png">
+
+                <label for="dieImage">Die / Flat Template Image (PNG)</label>
+                <input type="file" id="dieImage" accept="image/png">
+
+                <button type="button" id="mockupSaveBtn" class="admin-btn-primary">Save Box Template</button>
+                <div id="mockupMsg" class="admin-msg"></div>
+
+                <div class="admin-list" id="comboList"></div>
+                <p class="admin-empty-hint" id="comboEmptyHint">No dashboard-added box templates yet.</p>
+            </div>
+        </div>
+        </div>
+
+        <!-- ── Convert Logo: PNG/JPG → vector trace (SVG + EPS) ──
+             Same logged-in area as the rest of the app — no separate password step. -->
+        <div id="tabPanel-convert" class="tab-panel" style="display:none;">
+        <div id="convertPanel" class="admin-panel">
+            <div class="admin-card">
+                <h2>Upload Logo</h2>
+                <p class="admin-card-hint">
+                    Upload your logo, then convert it below.
+                </p>
+                <label for="logoFile">Logo File (PNG or JPG)</label>
+                <input type="file" id="logoFile" accept="image/png,image/jpeg">
+                <div id="logoFileMsg" class="admin-msg"></div>
+            </div>
+
+            <div class="admin-card">
+                <h2>Convert Logo to Vector</h2>
+                <p class="admin-card-hint">
+                    Traces the logo into real vector paths (not just an embedded image), in black, with
+                    maximum detail preserved. <strong>In CorelDRAW, import the .svg file</strong> (File →
+                    Import) — it's the reliable one; CorelDRAW's own EPS interpreter is old and can import
+                    hand-made EPS files as blank even when the file is valid. The .eps is included for
+                    Illustrator/other software, or as a backup if SVG import ever gives you trouble. Once
+                    imported, File → Save As → .cdr gives you a true CorelDRAW file — a genuine .cdr can't
+                    be written outside CorelDRAW itself.
+                </p>
+
+                <button type="button" id="convertBtn" class="admin-btn-primary">Convert to Vector</button>
+                <div id="convertMsg" class="admin-msg"></div>
+
+                <div id="convertPreviewWrap" class="convert-preview-wrap" style="display:none;">
+                    <div id="convertPreview" class="convert-preview"></div>
+                    <div class="convert-download-row">
+                        <button type="button" id="downloadConvertedSVG" class="download-button">Download SVG</button>
+                        <button type="button" id="downloadConvertedEPS" class="download-button">Download EPS</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
     </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.5.0/fabric.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.all.min.js"></script>
     <script src="boxscript.js"></script>
+    <script src="admin.js"></script>
 </body>
 
 </html>

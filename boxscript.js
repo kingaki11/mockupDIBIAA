@@ -54,6 +54,52 @@ const boxColorLabels = {
     white: "White",
 };
 
+// Backend API (Railway) — dashboard-added box combos/printing colors and
+// server-side logo background removal. The site works fully without it;
+// everything here is additive to the static catalog above.
+const BACKEND_URL = 'https://mockupdibiaa-backend-production.up.railway.app';
+
+// Box type/style/color combos created via the dashboard, keyed "type|style|color".
+// Populated by mergeBackendCatalog(); checked by the Generate handler to know
+// whether to load images from the backend instead of the local boximg/plainimages folders.
+const backendCombos = new Set();
+
+// Saved logo placement per combo, keyed "type|style|color" -> { mockup: {x,y}, die: {x,y} }
+// (x/y are fractions of that canvas's width/height). Populated by mergeBackendCatalog().
+// Falls back to dead-center (0.5, 0.5) for any combo without a saved position — i.e.
+// existing behavior is unchanged until someone explicitly saves a position for it.
+const logoPositions = {};
+
+function getLogoPosition(comboKey, kind) {
+    const saved = (logoPositions[comboKey] || {})[kind];
+    return saved || { x: 0.5, y: 0.5 };
+}
+
+// Recolor map used by addLogoToCanvas, keyed by lowercase printing-color name.
+// Dashboard-added printing colors are merged into this at runtime.
+const colorMap = {
+    'golden': [215, 181, 109],
+    'black': [28, 27, 23],
+    'red': [255, 0, 0],
+    'brown': [165, 42, 42],
+    'green': [62, 112, 110],
+    'grey': [128, 128, 128],
+    'magenta': [255, 0, 255],
+    'maroon': [128, 37, 74],
+    'orange': [128, 165, 0],
+    'pink': [255, 192, 203],
+    'purple': [128, 0, 128],
+    'silver': [197, 198, 198],
+    'white': [254, 254, 254],
+    'blue': [62, 89, 156],
+    'yellow': [255, 255, 0],
+};
+
+function hexToRgb(hex) {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+    return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+}
+
 // Holds the background-removed logo PNG data URL after upload
 let processedLogoUrl = null;
 // Holds fabric canvas references after generation, for download
@@ -61,8 +107,76 @@ let generatedCanvas1 = null;
 let generatedCanvas2 = null;
 let generatedCanvas2Dims = { width: 300, height: 300 };
 
-// Removes the white/light background from a logo image using BFS flood-fill from edges.
-// Only removes pixels connected to the border that are near-white (tolerance 40/255 per channel).
+// Trims a canvas's transparent margins down to its actual visible pixels and
+// returns a PNG data URL. Without this, a logo that wasn't perfectly centered
+// in its own source file (or that came back from removal with extra padding)
+// would still be off-center once placed on the box — placement always centers
+// on the *image bounds*, so those bounds need to hug the artwork exactly.
+function trimCanvasToVisibleBounds(canvas) {
+    const w = canvas.width, h = canvas.height;
+    const ctx = canvas.getContext('2d');
+    const { data } = ctx.getImageData(0, 0, w, h);
+
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            if (data[(y * w + x) * 4 + 3] > 0) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (maxX < minX || maxY < minY) {
+        // Nothing visible survived (e.g. an all-background image) — fall back
+        // to the untrimmed canvas rather than producing an empty image.
+        return canvas.toDataURL('image/png');
+    }
+
+    const trimmedW = maxX - minX + 1;
+    const trimmedH = maxY - minY + 1;
+    const trimmedCanvas = document.createElement('canvas');
+    trimmedCanvas.width = trimmedW;
+    trimmedCanvas.height = trimmedH;
+    trimmedCanvas.getContext('2d').drawImage(canvas, minX, minY, trimmedW, trimmedH, 0, 0, trimmedW, trimmedH);
+    return trimmedCanvas.toDataURL('image/png');
+}
+
+// Primary background removal: sends the logo to the backend's ML-based cutout
+// (@imgly/background-removal-node) — handles any background (not just white/
+// near-white), unlike the flood-fill fallback below. Throws on any failure so
+// the caller can fall back to the client-side method.
+async function removeBackgroundViaBackend(file) {
+    const formData = new FormData();
+    formData.append('logo', file);
+    const res = await fetch(BACKEND_URL + '/remove-bg', { method: 'POST', body: formData });
+    if (!res.ok) throw new Error('Backend background removal failed (' + res.status + ')');
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
+    return new Promise(function (resolve, reject) {
+        const img = new Image();
+        img.onload = function () {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            URL.revokeObjectURL(objectUrl);
+            resolve(trimCanvasToVisibleBounds(canvas));
+        };
+        img.onerror = function () {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('Failed to load the background-removed image.'));
+        };
+        img.src = objectUrl;
+    });
+}
+
+// Fallback background removal (used only if the backend is unreachable): BFS
+// flood-fill from the image edges, removing pixels connected to the border
+// that are near-white (tolerance 40/255 per channel). Unlike the backend's ML
+// model, this only handles white/near-white backgrounds specifically.
 function removeBackground(img) {
     const tempCanvas = document.createElement('canvas');
     const w = img.naturalWidth || img.width;
@@ -114,7 +228,7 @@ function removeBackground(img) {
     }
 
     ctx.putImageData(imageData, 0, 0);
-    return tempCanvas.toDataURL('image/png');
+    return trimCanvasToVisibleBounds(tempCanvas);
 }
 
 // Populate Box Type dropdown on page load
@@ -170,8 +284,67 @@ boxStyleSelect.addEventListener('change', function () {
     });
 });
 
+// Pulls in dashboard-added box combos + printing colors from the backend and merges
+// them into the same lookup objects the static catalog above uses, so the existing
+// dropdown/generate/download logic picks them up with no other changes. Fails silently
+// (site stays fully static-catalog-functional) if the backend is unreachable.
+function mergeBackendCatalog(catalog) {
+    (catalog.combos || []).forEach(function (combo) {
+        const { type, style, color, dimensions } = combo;
+        if (!type || !style || !color) return;
+
+        if (!availableCombinations[type]) {
+            availableCombinations[type] = {};
+            const option = document.createElement('option');
+            option.value = type;
+            option.textContent = (catalog.types[type] || {}).label || type;
+            boxTypeSelect.appendChild(option);
+        }
+        if (!availableCombinations[type][style]) availableCombinations[type][style] = [];
+        if (!availableCombinations[type][style].includes(color)) {
+            availableCombinations[type][style].push(color);
+        }
+
+        if (catalog.types[type]) boxTypeLabels[type] = catalog.types[type].label;
+        if (catalog.styles[style]) boxStyleLabels[style] = catalog.styles[style].label;
+        if (catalog.colors[color]) boxColorLabels[color] = catalog.colors[color].label;
+        if (dimensions) {
+            boxDimensions[type] = boxDimensions[type] || {};
+            boxDimensions[type][style] = dimensions;
+        }
+
+        backendCombos.add(type + '|' + style + '|' + color);
+    });
+
+    const printingColorSelect = document.getElementById('printingColor');
+    Object.keys(catalog.printingColors || {}).forEach(function (key) {
+        const { label, hex } = catalog.printingColors[key];
+        colorMap[label.toLowerCase()] = hexToRgb(hex);
+        const alreadyThere = Array.from(printingColorSelect.options).some(function (o) {
+            return o.value.toLowerCase() === label.toLowerCase();
+        });
+        if (!alreadyThere) {
+            const option = document.createElement('option');
+            option.value = label;
+            option.textContent = label;
+            printingColorSelect.appendChild(option);
+        }
+    });
+
+    // Logo positions apply to ANY combo key (static or dashboard-added) — merge
+    // them all in directly, not just for combos found in catalog.combos above.
+    Object.keys(catalog.logoPositions || {}).forEach(function (key) {
+        logoPositions[key] = catalog.logoPositions[key];
+    });
+}
+
+fetch(BACKEND_URL + '/catalog')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (catalog) { if (catalog) mergeBackendCatalog(catalog); })
+    .catch(function (err) { console.warn('Backend catalog unavailable, using static catalog only.', err); });
+
 // When a logo file is chosen: validate PNG, remove background, show preview
-document.getElementById('logo').addEventListener('change', function () {
+document.getElementById('logo').addEventListener('change', async function () {
     const file = this.files[0];
     const processingHint = document.getElementById('bgProcessingHint');
     const previewWrap = document.getElementById('logoPreviewWrap');
@@ -195,18 +368,27 @@ document.getElementById('logo').addEventListener('change', function () {
     processingHint.style.display = 'block';
     previewWrap.style.display = 'none';
 
-    const reader = new FileReader();
-    reader.onload = function (e) {
-        const img = new Image();
-        img.onload = function () {
-            processedLogoUrl = removeBackground(img);
-            processingHint.style.display = 'none';
-            preview.src = processedLogoUrl;
-            previewWrap.style.display = 'flex';
-        };
-        img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+    // Prefer the backend's ML-based cutout (handles any background color/
+    // pattern); fall back to the client-side white-background flood-fill only
+    // if the backend can't be reached, so the feature still works offline.
+    try {
+        processedLogoUrl = await removeBackgroundViaBackend(file);
+    } catch (err) {
+        console.warn('Backend background removal unavailable, falling back to client-side removal.', err);
+        processedLogoUrl = await new Promise(function (resolve) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const img = new Image();
+                img.onload = function () { resolve(removeBackground(img)); };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    processingHint.style.display = 'none';
+    preview.src = processedLogoUrl;
+    previewWrap.style.display = 'flex';
 });
 
 document.getElementById('generateBtn').addEventListener('click', function () {
@@ -237,12 +419,18 @@ document.getElementById('generateBtn').addEventListener('click', function () {
             img.src = path;
         }
 
-        const png1 = `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
-        const jpg1 = `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
-        const png2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
-        const jpg2 = `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
+        const comboKey = boxType + '|' + boxStyle + '|' + boxColor;
+
+        // Dashboard-created combos live on the backend instead of the local
+        // boximg/plainimages folders — route to whichever source has them.
+        const isBackendCombo = backendCombos.has(comboKey);
+        const png1 = isBackendCombo ? `${BACKEND_URL}/images/${boxType}/${boxStyle}/${boxColor}/mockup` : `boximg/${boxType}/${boxStyle}/${boxColor}.png`;
+        const jpg1 = isBackendCombo ? png1 : `boximg/${boxType}/${boxStyle}/${boxColor}.jpg`;
+        const png2 = isBackendCombo ? `${BACKEND_URL}/images/${boxType}/${boxStyle}/${boxColor}/die` : `plainimages/${boxType}/${boxStyle}/${boxColor}.png`;
+        const jpg2 = isBackendCombo ? png2 : `plainimages/${boxType}/${boxStyle}/${boxColor}.jpg`;
 
         const canvas1 = new fabric.Canvas('previewCanvas1', { width: 300, height: 300, backgroundColor: '#fff' });
+        canvas1._comboKey = comboKey; // read by admin.js's "Save Logo Position"
         generatedCanvas1 = canvas1;
 
         loadImage(png1, jpg1, function (boxImg1) {
@@ -264,6 +452,7 @@ document.getElementById('generateBtn').addEventListener('click', function () {
                     const canvas2 = new fabric.Canvas('previewCanvas2', {
                         width: canvas2Width, height: canvas2Height, backgroundColor: '#fff'
                     });
+                    canvas2._comboKey = comboKey;
                     generatedCanvas2 = canvas2;
                     generatedCanvas2Dims = { width: canvas2Width, height: canvas2Height };
                     // Die image is larger (1840×3350 etc.) — gives accurate physical die dimensions.
@@ -276,12 +465,12 @@ document.getElementById('generateBtn').addEventListener('click', function () {
                         canvas2.add(boxImg2Fabric);
                         canvas2.renderAll();
 
-                        addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300);
-                        addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height);
+                        addLogoToCanvas(logoImg, canvas1, printingColor, 300, 300, getLogoPosition(comboKey, 'mockup'));
+                        addLogoToCanvas(logoImg, canvas2, printingColor, canvas2Width, canvas2Height, getLogoPosition(comboKey, 'die'));
                         document.getElementById('downloadArea').style.display = 'flex';
-                    });
+                    }, { crossOrigin: 'anonymous' });
                 });
-            });
+            }, { crossOrigin: 'anonymous' });
         });
     };
     logoImg.src = processedLogoUrl;
@@ -526,13 +715,15 @@ document.getElementById('textInput').addEventListener('keydown', function (e) {
 // ── Shapes & Icons ──
 
 var ICON_SVGS = {
-    fb: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M30,5 L70,5 L70,20 L45,20 L45,45 L65,45 L65,60 L45,60 L45,95 L30,95 Z"/></svg>',
-    x:  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="8,10 42,52 8,90 24,90 50,64 76,90 92,90 58,48 92,10 76,10 50,36 24,10"/></svg>',
-    ig: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill-rule="evenodd" d="M30,5 Q5,5 5,30 L5,70 Q5,95 30,95 L70,95 Q95,95 95,70 L95,30 Q95,5 70,5 Z M50,32 A18,18 0 1,0 50.01,32 Z"/><circle cx="75" cy="25" r="7"/></svg>',
-    wa: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50,8 A42,42 0 0,0 8,50 A42,42 0 0,0 26,80 L16,92 L32,86 A42,42 0 0,0 50,92 A42,42 0 0,0 92,50 A42,42 0 0,0 50,8 Z"/></svg>',
-    yt: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill-rule="evenodd" d="M12,20 Q5,20 5,28 L5,72 Q5,80 12,80 L88,80 Q95,80 95,72 L95,28 Q95,20 88,20 Z M40,36 L68,50 L40,64 Z"/></svg>',
-    tt: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M57,8 L57,64 A16,16 0 1,1 41,54 A16,16 0 0,1 57,64 L57,36 L80,24 L80,8 Z"/></svg>',
-    th: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50,5 A45,45 0 0,0 5,50 A45,45 0 0,0 50,95 L50,82 A32,32 0 0,1 18,50 A32,32 0 0,1 50,18 A32,32 0 0,1 82,50 L82,55 Q82,65 72,65 Q64,65 64,57 L64,35 A14,14 0 1,0 58,57 Q62,67 72,67 Q90,67 90,55 L90,50 A45,45 0 0,0 50,5 Z"/></svg>',
+    // Accurate single-path brand glyphs (Simple Icons, CC0) — recolorable via fill,
+    // same mechanism as the shapes below.
+    fb: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>',
+    x:  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg>',
+    ig: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg>',
+    wa: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>',
+    yt: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>',
+    tt: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>',
+    th: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.964-.065-1.19.408-2.285 1.33-3.082.88-.76 2.119-1.207 3.583-1.291a13.853 13.853 0 0 1 3.02.142c-.126-.742-.375-1.332-.75-1.757-.513-.586-1.308-.883-2.359-.89h-.029c-.844 0-1.992.232-2.721 1.32L7.734 7.847c.98-1.454 2.568-2.256 4.478-2.256h.044c3.194.02 5.097 1.975 5.287 5.388.108.046.216.094.321.142 1.49.7 2.58 1.761 3.154 3.07.797 1.82.871 4.79-1.548 7.158-1.85 1.81-4.094 2.628-7.277 2.65Zm1.003-11.69c-.242 0-.487.007-.739.021-1.836.103-2.98.946-2.916 2.143.067 1.256 1.452 1.839 2.784 1.767 1.224-.065 2.818-.543 3.086-3.71a10.5 10.5 0 0 0-2.215-.221z"/></svg>',
     fragile:   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M38,5 L62,5 L70,38 Q74,52 60,58 L60,80 L70,80 L70,95 L30,95 L30,80 L40,80 L40,58 Q26,52 30,38 Z"/></svg>',
     dry:       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50,8 Q8,8 8,48 L46,48 L46,78 Q46,88 38,88 L38,97 L62,97 L62,88 Q54,88 54,78 L54,48 L92,48 Q92,8 50,8 Z M26,62 A5,8 0 1,1 26.01,62 Z M44,72 A5,8 0 1,1 44.01,72 Z M62,62 A5,8 0 1,1 62.01,62 Z"/></svg>',
     upright:   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="28,48 14,70 22,70 22,90 34,90 34,70 42,70"/><polygon points="72,48 58,70 66,70 66,90 78,90 78,70 86,70"/></svg>',
@@ -618,17 +809,20 @@ function addShapeToCanvas(type, color, size, canvas, cW, cH) {
     canvas.renderAll();
 }
 
-function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight) {
+function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeight, position) {
+    const pos = position || { x: 0.5, y: 0.5 };
+
     if (printingColor.toLowerCase() === 'none') {
         fabric.Image.fromURL(logoImg.src, function (logoFabricImg) {
             logoFabricImg.scaleToWidth(50);
             logoFabricImg.set({
-                left: canvasWidth / 2,
-                top: canvasHeight / 2,
+                left: canvasWidth * pos.x,
+                top: canvasHeight * pos.y,
                 originX: 'center',
                 originY: 'center',
                 selectable: true,
                 hasControls: true,
+                isLogo: true,
             });
             canvas.add(logoFabricImg);
             canvas.setActiveObject(logoFabricImg);
@@ -647,23 +841,6 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
     const imageData = tempCtx.getImageData(0, 0, logoImg.width, logoImg.height);
     const data = imageData.data;
 
-    const colorMap = {
-        'golden': [215, 181, 109],
-        'black': [28, 27, 23],
-        'red': [255, 0, 0],
-        'brown': [165, 42, 42],
-        'green': [62, 112, 110],
-        'grey': [128, 128, 128],
-        'magenta': [255, 0, 255],
-        'maroon': [128, 37, 74],
-        'orange': [128, 165, 0],
-        'pink': [255, 192, 203],
-        'purple': [128, 0, 128],
-        'silver': [197, 198, 198],
-        'white': [254, 254, 254],
-        'blue': [62, 89, 156],
-        'yellow': [255, 255, 0],
-    };
     const selectedColor = colorMap[printingColor.toLowerCase()] || [0, 0, 0];
 
     for (let i = 0; i < data.length; i += 4) {
@@ -678,12 +855,13 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
     fabric.Image.fromURL(recoloredLogoURL, function (logoFabricImg) {
         logoFabricImg.scaleToWidth(50);
         logoFabricImg.set({
-            left: canvasWidth / 2,
-            top: canvasHeight / 2,
+            left: canvasWidth * pos.x,
+            top: canvasHeight * pos.y,
             originX: 'center',
             originY: 'center',
             selectable: true,
             hasControls: true,
+            isLogo: true,
         });
         canvas.add(logoFabricImg);
         canvas.setActiveObject(logoFabricImg);

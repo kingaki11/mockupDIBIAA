@@ -24,15 +24,246 @@
     --shadow-lg: 0 10px 28px -5px rgba(0,0,0,.14), 0 4px 10px -4px rgba(0,0,0,.08);
 }
 
-/* ── Page ── */
+/* ── Page ──
+   Centering/padding live on .login-screen and .app-content (below), not on
+   body itself — body can then hold either one, or both hidden/shown in turn,
+   without them ever fighting over a shared flex row. */
 body {
     font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #a855f7 100%);
     min-height: 100vh;
+}
+
+.login-screen,
+.app-content {
+    min-height: 100vh;
     display: flex;
-    align-items: flex-start;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
     padding: 32px 16px 48px;
+}
+
+.login-screen {
+    justify-content: center;
+    padding: 24px;
+}
+
+/* ── Login card ── */
+.login-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--white);
+    border-radius: 22px;
+    box-shadow: var(--shadow-lg);
+    padding: 44px 36px;
+    text-align: center;
+}
+
+.login-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 18px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    box-shadow: 0 8px 20px rgba(37,99,235,.35);
+}
+
+.login-card h1 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text);
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 6px;
+    letter-spacing: -0.3px;
+}
+
+.login-sub {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 26px;
+}
+
+.login-card label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    text-align: left;
+    margin-bottom: 6px;
+}
+
+.login-card input[type="password"] {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-family: inherit;
+    outline: none;
+    text-align: center;
+    letter-spacing: 2px;
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.login-card input[type="password"]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.14);
+    letter-spacing: normal;
+}
+
+.login-btn {
+    width: 100%;
+    margin-top: 18px;
+    padding: 13px 22px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    color: white;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    font-family: inherit;
+    box-shadow: 0 4px 14px rgba(37,99,235,.38);
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.login-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 7px 20px rgba(37,99,235,.48);
+}
+.login-btn:active { transform: translateY(0); }
+.login-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+.login-msg {
+    font-size: 13px;
+    margin-top: 16px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    display: none;
+    text-align: left;
+}
+
+.login-msg.error {
+    display: block;
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+
+@media (max-width: 479px) {
+    .login-card {
+        padding: 34px 24px;
+        border-radius: 18px;
+    }
+}
+
+/* ── Signed-in top bar (tabs + log out) ── */
+.app-topbar {
+    width: 100%;
+    max-width: 1180px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 0 16px 18px;
+}
+
+.app-tabbar {
+    display: flex;
+    gap: 6px;
+    padding: 5px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.24);
+    flex-wrap: wrap;
+}
+
+.app-tab {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: rgba(255,255,255,.85);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 8px 18px;
+    border-radius: 999px;
+    white-space: nowrap;
+    transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.app-tab:hover {
+    background: rgba(255,255,255,.14);
+    color: #fff;
+}
+
+.app-tab.active {
+    background: var(--white);
+    color: var(--blue-dark);
+    box-shadow: 0 3px 10px rgba(0,0,0,.18);
+}
+
+.app-logout-link {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: rgba(255,255,255,.88);
+    cursor: pointer;
+    padding: 7px 16px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.28);
+    transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+    flex-shrink: 0;
+}
+
+.app-logout-link:hover {
+    background: rgba(255,255,255,.2);
+    border-color: rgba(255,255,255,.45);
+    transform: translateY(-1px);
+}
+
+/* ── Tab panels ──
+   Each tab's content is a direct child of .app-content in markup terms, but
+   now sits one level inside a .tab-panel wrapper — mirror .app-content's own
+   centering so .container/#adminPanel/#convertPanel still center correctly. */
+.tab-panel {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.tab-panel.admin-panel-open {
+    animation: adminFadeSlideIn 280ms cubic-bezier(.16,.84,.44,1);
+}
+
+@media (max-width: 640px) {
+    .app-topbar {
+        justify-content: center;
+    }
+
+    .app-tabbar {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .app-tab {
+        flex: 1;
+        padding: 8px 10px;
+        text-align: center;
+    }
 }
 
 /* ── Card ── */
@@ -531,10 +762,103 @@ h2 {
     opacity: 0.82;
 }
 
+/* ── Convert Logo (vector trace) ── */
+
+.convert-preview-wrap {
+    margin-top: 20px;
+}
+
+.convert-preview {
+    width: 100%;
+    aspect-ratio: 1;
+    max-height: 260px;
+    background: repeating-conic-gradient(#e2e8f0 0% 25%, white 0% 50%) 0 0 / 16px 16px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+.convert-preview svg {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.convert-download-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.convert-download-row .download-button {
+    width: auto;
+    flex: 1;
+}
+
+#downloadConvertedSVG {
+    background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(13,148,136,.38);
+}
+#downloadConvertedSVG:hover { transform: translateY(-2px); box-shadow: 0 7px 20px rgba(13,148,136,.48); }
+#downloadConvertedSVG:active { transform: translateY(0); }
+
+#downloadConvertedEPS {
+    background: linear-gradient(135deg, #475569 0%, #334155 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(51,65,85,.38);
+}
+#downloadConvertedEPS:hover { transform: translateY(-2px); box-shadow: 0 7px 20px rgba(51,65,85,.48); }
+#downloadConvertedEPS:active { transform: translateY(0); }
+
+@media (max-width: 479px) {
+    .convert-download-row {
+        flex-direction: column;
+    }
+}
+
+.logo-pos-hint {
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.5;
+    text-align: center;
+    margin-top: 4px;
+}
+
+.logo-pos-button {
+    width: 100%;
+    padding: 11px 20px;
+    border: 1.5px dashed #94a3b8;
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    font-family: inherit;
+    margin: 0;
+    line-height: 1.4;
+    transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.logo-pos-button:hover {
+    border-color: var(--blue);
+    background: var(--blue-xlight);
+    color: var(--blue-dark);
+    transform: translateY(-1px);
+}
+
+.logo-pos-button:active { transform: translateY(0); }
+.logo-pos-button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
 /* ── Desktop (≥768px): side by side ── */
 @media (min-width: 768px) {
-    body {
-        align-items: center;
+    .app-content {
+        justify-content: center;
         padding: 48px 24px;
     }
 
@@ -561,7 +885,8 @@ h2 {
 
 /* ── Tablet (480px–767px) ── */
 @media (min-width: 480px) and (max-width: 767px) {
-    body {
+    .app-content,
+    .login-screen {
         padding: 24px 16px;
     }
 
@@ -576,9 +901,13 @@ h2 {
 
 /* ── Mobile (<480px) ── */
 @media (max-width: 479px) {
-    body {
+    .app-content {
         padding: 12px 10px 32px;
-        align-items: flex-start;
+        justify-content: flex-start;
+    }
+
+    .login-screen {
+        padding: 16px;
     }
 
     .container {
@@ -624,5 +953,322 @@ h2 {
 
     #downloadArea {
         max-width: 100%;
+    }
+}
+
+/* ── Admin: catalog management (appended, does not affect anything above) ── */
+
+.admin-toggle-wrap {
+    max-width: 1180px;
+    margin: 22px auto 0;
+    padding: 0 16px;
+    text-align: center;
+}
+
+.admin-toggle-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: rgba(255,255,255,.88);
+    cursor: pointer;
+    text-decoration: none;
+    padding: 7px 16px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.28);
+    backdrop-filter: blur(4px);
+    transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.admin-toggle-link:hover {
+    background: rgba(255,255,255,.2);
+    border-color: rgba(255,255,255,.45);
+    transform: translateY(-1px);
+}
+
+@keyframes adminFadeSlideIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.admin-panel {
+    max-width: 640px;
+    margin: 18px auto 0;
+    padding: 0 16px 56px;
+}
+
+.admin-panel.admin-panel-open {
+    animation: adminFadeSlideIn 280ms cubic-bezier(.16,.84,.44,1);
+}
+
+.admin-card {
+    background: var(--white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 28px;
+    margin-bottom: 20px;
+    border-top: 3px solid var(--blue);
+    transition: box-shadow 200ms ease, transform 200ms ease;
+}
+
+.admin-card:hover {
+    box-shadow: 0 16px 36px -8px rgba(0,0,0,.18), 0 6px 14px -6px rgba(0,0,0,.1);
+}
+
+.admin-card h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+    text-transform: none;
+    letter-spacing: normal;
+    text-align: left;
+    margin-bottom: 4px;
+}
+
+.admin-card-hint {
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+    margin-bottom: 20px;
+}
+
+.admin-panel label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-top: 14px;
+    margin-bottom: 6px;
+}
+
+.admin-panel label:first-of-type {
+    margin-top: 0;
+}
+
+.admin-panel input[type="text"],
+.admin-panel input[type="password"] {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    background: var(--white);
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-panel input[type="text"]:hover,
+.admin-panel input[type="password"]:hover {
+    border-color: #94a3b8;
+}
+
+.admin-panel input[type="text"]:focus,
+.admin-panel input[type="password"]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.14);
+}
+
+.admin-panel input[type="file"] {
+    width: 100%;
+    font-size: 13px;
+    padding: 9px 10px;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease;
+}
+
+.admin-panel input[type="file"]:hover {
+    border-color: var(--blue);
+    background: var(--blue-xlight);
+}
+
+.admin-panel input[type="color"] {
+    width: 100%;
+    height: 42px;
+    padding: 3px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color 160ms ease;
+}
+
+.admin-panel input[type="color"]:hover {
+    border-color: #94a3b8;
+}
+
+.admin-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.admin-btn-primary {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(37,99,235,.35);
+    margin-top: 18px;
+    width: 100%;
+    padding: 12px 22px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 7px 20px rgba(37,99,235,.45);
+}
+.admin-btn-primary:active { transform: translateY(0); }
+.admin-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.admin-msg {
+    font-size: 13px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    display: none;
+    animation: adminFadeSlideIn 200ms ease;
+}
+
+.admin-msg.success {
+    display: block;
+    background: #f0fdf4;
+    color: var(--green);
+    border: 1px solid #bbf7d0;
+}
+
+.admin-msg.error {
+    display: block;
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+
+.admin-list {
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.admin-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    background: var(--bg);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    transition: border-color 140ms ease, background 140ms ease;
+}
+
+.admin-list-item:hover {
+    border-color: var(--border);
+    background: var(--white);
+}
+
+.admin-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    border: 1px solid rgba(0,0,0,.15);
+    flex-shrink: 0;
+}
+
+.admin-list-item img {
+    width: 36px;
+    height: 36px;
+    object-fit: contain;
+    background: repeating-conic-gradient(#d1d5db 0% 25%, white 0% 50%) 0 0 / 8px 8px;
+    border-radius: 5px;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+}
+
+.admin-list-item .admin-meta {
+    flex: 1;
+    color: var(--text);
+    min-width: 0;
+    overflow-wrap: break-word;
+}
+
+.admin-list-item .admin-meta small {
+    display: block;
+    color: var(--muted);
+    font-weight: 400;
+}
+
+.admin-empty-hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 12px;
+}
+
+.admin-btn-delete {
+    background: none;
+    border: 1px solid var(--border);
+    color: #dc2626;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 11px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.admin-btn-delete:hover {
+    background: #fef2f2;
+    border-color: #fecaca;
+    transform: translateY(-1px);
+}
+.admin-btn-delete:active { transform: translateY(0); }
+
+/* ── Admin: tablet/mobile ── */
+@media (max-width: 640px) {
+    .admin-row {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+
+    .admin-card {
+        padding: 22px 20px;
+    }
+}
+
+@media (max-width: 479px) {
+    .admin-panel {
+        padding: 0 12px 40px;
+    }
+
+    .admin-card {
+        padding: 18px 16px;
+        border-radius: 12px;
+    }
+
+    .admin-card h2 {
+        font-size: 1rem;
+    }
+
+    .admin-list-item {
+        flex-wrap: wrap;
+    }
+
+    .admin-list-item .admin-meta {
+        flex-basis: 100%;
+        order: 3;
     }
 }
