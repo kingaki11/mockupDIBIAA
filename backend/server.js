@@ -543,10 +543,24 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
     let sourceBuffer = req.file.buffer;
     let sourceMime = req.file.mimetype;
     let enhanceMeta = null;
+    let enhanceError = null;
     let enhancedDataUrl = null;
+
+    // Decode first: a file that was never going to trace must not be billed for.
+    let probe;
     try {
-        const probe = await Jimp.read(sourceBuffer);
-        if (wantsEnhance) {
+        probe = await Jimp.read(sourceBuffer);
+    } catch (readErr) {
+        console.warn('Rejected unreadable upload:', readErr.message);
+        return res.status(400).json({ error: 'Could not read that image file.', detail: readErr.message });
+    }
+
+    if (wantsEnhance) {
+        // The AI step is now the default path, so a failure here must not take
+        // the whole conversion down with it. Out of credit, a revoked key, a slow
+        // day at OpenAI — the user still gets a vector traced from their original,
+        // and the response says why it is not the enhanced one.
+        try {
             const enhanced = await aiEnhance.enhanceImage(
                 sourceBuffer,
                 sourceMime,
@@ -559,22 +573,15 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
             // Returned so the UI can show the redraw beside the original — the
             // whole point being that the user sees what the model changed.
             enhancedDataUrl = 'data:image/png;base64,' + enhanced.buffer.toString('base64');
+        } catch (aiErr) {
+            const reasons = {
+                ENOKEY: 'AI clean-up is not configured on the server',
+                EBADKEY: 'the AI service rejected our API key',
+                ETIMEDOUT: 'the AI clean-up timed out',
+            };
+            enhanceError = reasons[aiErr.code] || ('the AI clean-up failed: ' + aiErr.message);
+            console.warn('AI enhancement skipped —', enhanceError);
         }
-    } catch (prepErr) {
-        if (prepErr.code === 'ENOKEY') {
-            return res.status(503).json({ error: 'AI enhancement is not configured on this server.' });
-        }
-        if (prepErr.code === 'EBADKEY') {
-            return res.status(502).json({ error: 'The AI image service rejected our API key.' });
-        }
-        if (prepErr.code === 'ETIMEDOUT') {
-            return res.status(504).json({ error: 'AI enhancement took too long. Try again, or convert without it.' });
-        }
-        if (prepErr.code === 'EUPSTREAM') {
-            return res.status(502).json({ error: 'AI enhancement failed: ' + prepErr.message });
-        }
-        console.warn('Rejected unreadable upload:', prepErr.message);
-        return res.status(400).json({ error: 'Could not read that image file.', detail: prepErr.message });
     }
 
     let raster;
@@ -613,6 +620,7 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 options: opts,
                 size: sourceSize,
                 aiEnhance: enhanceMeta,
+                aiEnhanceError: enhanceError,
             },
         });
     } catch (traceErr) {

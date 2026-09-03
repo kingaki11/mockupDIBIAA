@@ -342,73 +342,22 @@ document.getElementById('saveLogoPosBtn').addEventListener('click', async functi
 
 // ── Convert to Vector (JPG/PNG/WEBP → SVG) ──
 //
-// Two engines behind one button. "Full colour" goes to /api/convert/svg, backed
-// by VTracer, which reproduces the original colours. "Black silhouette" goes to
-// the older /convert-logo, backed by potrace, which also returns an EPS. VTracer
-// has a binary mode of its own but it ignores the alpha channel and inverts a
-// cut-out logo into white-on-black, so the two engines are not interchangeable.
+// One upload, one button, no choices. Every conversion removes the background,
+// redraws the artwork with OpenAI, then traces the result to full-colour vector
+// paths. The tracing knobs VTracer exposes are left at their defaults rather
+// than surfaced — they were controls nobody wanted to touch.
+//
+// If the AI step fails the backend still returns a vector traced from the
+// original, and says so, so a lapsed key or an OpenAI outage degrades the
+// output instead of breaking the tab.
 
 let MAX_UPLOAD_MB = 15;                 // provisional; the backend's real limit is read below
 const INLINE_SVG_LIMIT = 1024 * 1024;   // above this, preview via blob URL, not innerHTML
 
-const ADVANCED_DEFAULTS = { colorPrecision: 6, filterSpeckle: 4, cornerThreshold: 60, mode: 'spline', removeBg: true };
-
 let convertedSVG = null;
-let convertedEPS = null;
-let selectedLogoFile = null;   // kept so settings can be changed and re-run without re-uploading
+let selectedLogoFile = null;   // kept so a failed convert can be retried without re-uploading
 let originalObjectUrl = null;
 let previewObjectUrl = null;
-
-function convertMode() {
-    const checked = document.querySelector('input[name="convertMode"]:checked');
-    return checked ? checked.value : 'color';
-}
-
-function advancedValues() {
-    const modeEl = document.querySelector('input[name="optMode"]:checked');
-    return {
-        colorPrecision: document.getElementById('optColorPrecision').value,
-        filterSpeckle: document.getElementById('optFilterSpeckle').value,
-        cornerThreshold: document.getElementById('optCornerThreshold').value,
-        mode: modeEl ? modeEl.value : 'spline',
-        removeBackground: document.getElementById('optRemoveBg').checked,
-        enhance: document.getElementById('optEnhance').checked,
-    };
-}
-
-// Live slider read-outs, so a value is visible without moving the handle.
-['ColorPrecision', 'FilterSpeckle', 'CornerThreshold'].forEach(function (name) {
-    const input = document.getElementById('opt' + name);
-    const out = document.getElementById('out' + name);
-    if (!input || !out) return;
-    input.addEventListener('input', function () { out.textContent = input.value; });
-});
-
-document.getElementById('resetAdvanced').addEventListener('click', function () {
-    document.getElementById('optColorPrecision').value = ADVANCED_DEFAULTS.colorPrecision;
-    document.getElementById('optFilterSpeckle').value = ADVANCED_DEFAULTS.filterSpeckle;
-    document.getElementById('optCornerThreshold').value = ADVANCED_DEFAULTS.cornerThreshold;
-    document.getElementById('outColorPrecision').textContent = ADVANCED_DEFAULTS.colorPrecision;
-    document.getElementById('outFilterSpeckle').textContent = ADVANCED_DEFAULTS.filterSpeckle;
-    document.getElementById('outCornerThreshold').textContent = ADVANCED_DEFAULTS.cornerThreshold;
-    document.getElementById('optRemoveBg').checked = ADVANCED_DEFAULTS.removeBg;
-    document.getElementById('optEnhance').checked = false;
-    const spline = document.querySelector('input[name="optMode"][value="spline"]');
-    if (spline) spline.checked = true;
-});
-
-// The colour-only knobs mean nothing to the potrace path, so hide them there
-// rather than leaving controls on screen that silently do nothing.
-function syncModeUi() {
-    const isColour = convertMode() === 'color';
-    document.querySelectorAll('[data-colour-only]').forEach(function (el) {
-        el.style.display = isColour ? '' : 'none';
-    });
-    document.getElementById('downloadConvertedEPS').style.display = convertedEPS ? '' : 'none';
-}
-document.querySelectorAll('input[name="convertMode"]').forEach(function (el) {
-    el.addEventListener('change', syncModeUi);
-});
 
 // ── Upload: drag-and-drop plus click-to-browse ──
 
@@ -454,20 +403,14 @@ dropzone.addEventListener('drop', function (e) {
     if (file) acceptLogoFile(file);
 });
 
-// Kept for callers that still expect the old accessor.
-function getSharedLogoFile(msg) {
-    if (!selectedLogoFile) { showAdminMsg(msg, 'Upload an image above first.', true); return null; }
-    return selectedLogoFile;
-}
-
 // ── Convert ──
 
 function renderVectorPreview(svg) {
     const target = document.getElementById('convertPreview');
     if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
 
-    // A photo can vectorise into several megabytes of path data. Parsing that as
-    // live DOM locks the tab up, so hand anything large to the renderer as an
+    // A detailed trace can run to several megabytes of path data. Parsing that
+    // as live DOM locks the tab up, so hand anything large to the renderer as an
     // image instead — it looks identical and stays responsive.
     if (svg.length > INLINE_SVG_LIMIT) {
         previewObjectUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
@@ -484,35 +427,20 @@ function renderVectorPreview(svg) {
 document.getElementById('convertBtn').addEventListener('click', async function () {
     const msg = document.getElementById('convertMsg');
     const previewWrap = document.getElementById('convertPreviewWrap');
-    const file = getSharedLogoFile(msg);
-    if (!file) return;
-
-    const colour = convertMode() === 'color';
-    const adv = advancedValues();
+    if (!selectedLogoFile) { showAdminMsg(msg, 'Upload an image above first.', true); return; }
 
     const formData = new FormData();
-    if (colour) {
-        formData.append('image', file);
-        formData.append('colorPrecision', adv.colorPrecision);
-        formData.append('filterSpeckle', adv.filterSpeckle);
-        formData.append('cornerThreshold', adv.cornerThreshold);
-        formData.append('mode', adv.mode);
-        formData.append('removeBackground', String(adv.removeBackground));
-        formData.append('enhance', String(adv.enhance));
-    } else {
-        formData.append('logo', file);
-    }
+    formData.append('image', selectedLogoFile);
+    formData.append('removeBackground', 'true');
+    formData.append('enhance', 'true');
 
     this.disabled = true;
-    this.classList.add('is-busy');
     const originalLabel = this.textContent;
     this.textContent = 'Converting…';
-    showAdminMsg(msg, adv.enhance
-        ? 'Cleaning up with AI, then tracing… this takes around 20 seconds.'
-        : 'Tracing… this can take a few seconds.', false);
+    showAdminMsg(msg, 'Removing the background, redrawing with AI, then tracing… about 20 seconds.', false);
 
     try {
-        const res = await fetch(BACKEND_URL + (colour ? '/api/convert/svg' : '/convert-logo'), {
+        const res = await fetch(BACKEND_URL + '/api/convert/svg', {
             method: 'POST',
             headers: adminAuthHeaders(),
             body: formData,
@@ -521,7 +449,6 @@ document.getElementById('convertBtn').addEventListener('click', async function (
         if (!res.ok) throw new Error(data.error || 'Conversion failed (' + res.status + ').');
 
         convertedSVG = data.svg;
-        convertedEPS = data.eps || null;
 
         const originalTarget = document.getElementById('convertOriginal');
         originalTarget.innerHTML = '';
@@ -529,8 +456,6 @@ document.getElementById('convertBtn').addEventListener('click', async function (
         originalImg.src = originalObjectUrl;
         originalImg.alt = 'Original upload';
         originalTarget.appendChild(originalImg);
-
-        renderVectorPreview(data.svg);
 
         // Show what the AI actually produced, so the difference from the
         // original is visible before anyone downloads the trace of it.
@@ -540,66 +465,37 @@ document.getElementById('convertBtn').addEventListener('click', async function (
         if (data.enhancedPng) {
             const enhancedImg = document.createElement('img');
             enhancedImg.src = data.enhancedPng;
-            enhancedImg.alt = 'AI cleaned-up version';
+            enhancedImg.alt = 'AI redrawn version';
             enhancedTarget.appendChild(enhancedImg);
             enhancedFigure.style.display = '';
         } else {
             enhancedFigure.style.display = 'none';
         }
 
-        const meta = data.meta;
+        renderVectorPreview(data.svg);
+
+        const meta = data.meta || {};
         let summary = (data.svg.length / 1024).toFixed(0) + ' KB SVG';
-        if (meta) {
-            summary = meta.size.width + '×' + meta.size.height + ' · traced in ' + meta.ms + ' ms · ' + summary;
-            if (meta.backgroundRemoved) summary += ' · background removed';
-            if (meta.aiEnhance) {
-                summary += ' · AI ' + meta.aiEnhance.quality;
-                if (meta.aiEnhance.estimatedCostUsd !== null && meta.aiEnhance.estimatedCostUsd !== undefined) {
-                    summary += ' (~$' + meta.aiEnhance.estimatedCostUsd.toFixed(3) + ')';
-                }
-            }
+        if (meta.size) summary = meta.size.width + '×' + meta.size.height + ' · traced in ' + meta.ms + ' ms · ' + summary;
+        if (meta.aiEnhance && meta.aiEnhance.estimatedCostUsd != null) {
+            summary += ' · AI ' + meta.aiEnhance.quality + ' (~$' + meta.aiEnhance.estimatedCostUsd.toFixed(3) + ')';
         }
         document.getElementById('convertMeta').textContent = summary;
 
         previewWrap.style.display = 'block';
-        syncModeUi();
 
-// Take the upload ceiling from the server rather than trusting a copy of the
-// number here, so raising MAX_UPLOAD_MB in Railway doesn't leave the client
-// rejecting files the backend would have accepted.
-fetch(BACKEND_URL + '/api/convert/health')
-    .then(function (res) { return res.ok ? res.json() : null; })
-    .then(function (health) {
-        if (!health || !health.limits || !health.limits.maxUploadMb) return;
-        MAX_UPLOAD_MB = health.limits.maxUploadMb;
-        const label = document.getElementById('maxUploadLabel');
-        if (label) label.textContent = MAX_UPLOAD_MB;
-
-        // Don't offer the AI step if the server has no key for it — a checkbox
-        // that can only ever return 503 is worse than no checkbox.
-        const enhanceBox = document.getElementById('optEnhance');
-        const available = health.aiEnhance && health.aiEnhance.available;
-        if (!available) {
-            enhanceBox.checked = false;
-            enhanceBox.disabled = true;
-            document.getElementById('enhanceRow').classList.add('is-disabled');
-            document.getElementById('enhanceHint').textContent = '(not configured on the server)';
-            document.getElementById('enhanceWarn').style.display = 'none';
+        if (meta.aiEnhanceError) {
+            // Degraded, not failed: they still have a usable vector, but it was
+            // traced from the original, so say so rather than let them wonder.
+            showAdminMsg(msg, 'Traced — but ' + meta.aiEnhanceError + ', so this is a trace of your original image.', true);
         } else {
-            document.getElementById('enhanceHint').textContent =
-                '(redraws the artwork sharper and larger before tracing, using ' + health.aiEnhance.model
-                + ' at ' + health.aiEnhance.quality + ' quality)';
+            showAdminMsg(msg, 'Done — download below, or import the SVG into CorelDRAW.', false);
         }
-    })
-    .catch(function () { /* keep the default; the convert call will surface any real problem */ });
-        showAdminMsg(msg, 'Traced successfully — download below, or import the SVG into CorelDRAW.', false);
     } catch (err) {
-        // The upload is deliberately kept, so the user can adjust the settings
-        // and retry without picking the file again.
-        showAdminMsg(msg, err.message + ' Your image is still loaded — adjust the options and try again.', true);
+        // The upload is deliberately kept, so the user can just press Convert again.
+        showAdminMsg(msg, err.message + ' Your image is still loaded — press Convert to try again.', true);
     } finally {
         this.disabled = false;
-        this.classList.remove('is-busy');
         this.textContent = originalLabel;
     }
 });
@@ -614,19 +510,21 @@ function downloadTextFile(text, filename, mime) {
     URL.revokeObjectURL(url);
 }
 
-function downloadBaseName() {
-    if (!selectedLogoFile) return 'logo-traced';
-    return selectedLogoFile.name.replace(/\.[^.]+$/, '') + '-traced';
-}
-
 document.getElementById('downloadConvertedSVG').addEventListener('click', function () {
     if (!convertedSVG) return;
-    downloadTextFile(convertedSVG, downloadBaseName() + '.svg', 'image/svg+xml');
+    const base = selectedLogoFile ? selectedLogoFile.name.replace(/\.[^.]+$/, '') + '-traced' : 'logo-traced';
+    downloadTextFile(convertedSVG, base + '.svg', 'image/svg+xml');
 });
 
-document.getElementById('downloadConvertedEPS').addEventListener('click', function () {
-    if (!convertedEPS) return;
-    downloadTextFile(convertedEPS, downloadBaseName() + '.eps', 'application/postscript');
-});
-
-syncModeUi();
+// Take the upload ceiling from the server rather than trusting a copy of the
+// number here, so raising MAX_UPLOAD_MB in Railway doesn't leave the client
+// rejecting files the backend would have accepted.
+fetch(BACKEND_URL + '/api/convert/health')
+    .then(function (res) { return res.ok ? res.json() : null; })
+    .then(function (health) {
+        if (!health || !health.limits || !health.limits.maxUploadMb) return;
+        MAX_UPLOAD_MB = health.limits.maxUploadMb;
+        const label = document.getElementById('maxUploadLabel');
+        if (label) label.textContent = MAX_UPLOAD_MB;
+    })
+    .catch(function () { /* keep the default; the convert call will surface any real problem */ });

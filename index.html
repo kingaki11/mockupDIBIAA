@@ -328,74 +328,18 @@
             <div class="admin-card">
                 <h2>Convert to Vector</h2>
                 <p class="admin-card-hint">
-                    Traces the image into real, editable vector paths &mdash; not an embedded bitmap.
+                    Removes the background, redraws the artwork sharper with AI, then traces it into real,
+                    editable vector paths &mdash; not an embedded bitmap.
                     <strong>In CorelDRAW, import the .svg</strong> (File &rarr; Import), then File &rarr;
                     Save As &rarr; .cdr for a true CorelDRAW file. A genuine .cdr can only be written by
                     CorelDRAW itself.
                 </p>
 
-                <fieldset class="convert-mode">
-                    <legend>Output</legend>
-                    <label class="convert-mode-option">
-                        <input type="radio" name="convertMode" value="color" checked>
-                        <span><strong>Full colour</strong><em>Keeps the original colours. Best for general artwork.</em></span>
-                    </label>
-                    <label class="convert-mode-option">
-                        <input type="radio" name="convertMode" value="black">
-                        <span><strong>Black silhouette</strong><em>Solid black, plus an EPS. For printing on boxes.</em></span>
-                    </label>
-                </fieldset>
-
-                <details class="convert-advanced">
-                    <summary>Advanced options</summary>
-                    <p class="convert-advanced-hint">
-                        The defaults suit most logos &mdash; you only need these if the result needs tuning.
-                    </p>
-
-                    <label class="convert-toggle">
-                        <input type="checkbox" id="optRemoveBg" checked>
-                        <span>Remove the background <em>(turn off for photos, where the background is part of the picture)</em></span>
-                    </label>
-
-                    <label class="convert-toggle" id="enhanceRow">
-                        <input type="checkbox" id="optEnhance">
-                        <span>Clean up with AI first <em id="enhanceHint">(redraws the artwork sharper and larger before tracing)</em></span>
-                    </label>
-                    <p class="convert-warn" id="enhanceWarn">
-                        <strong>Changes the artwork.</strong> The AI redraws rather than upscales &mdash; it keeps the
-                        wording and colours, but letterforms come back slightly different. Good for tidying a rough
-                        scan; not for a client&rsquo;s exact brand mark. Costs about $0.07 per conversion.
-                    </p>
-
-                    <div class="convert-slider" data-colour-only>
-                        <label for="optColorPrecision">Colour precision <output id="outColorPrecision">6</output></label>
-                        <input type="range" id="optColorPrecision" min="1" max="8" step="1" value="6">
-                        <span class="convert-slider-hint">More colours retained, larger file.</span>
-                    </div>
-
-                    <div class="convert-slider">
-                        <label for="optFilterSpeckle">Detail / speckle filter <output id="outFilterSpeckle">4</output></label>
-                        <input type="range" id="optFilterSpeckle" min="0" max="32" step="1" value="4">
-                        <span class="convert-slider-hint">Higher discards more small specks.</span>
-                    </div>
-
-                    <div class="convert-slider" data-colour-only>
-                        <label for="optCornerThreshold">Corner smoothness <output id="outCornerThreshold">60</output></label>
-                        <input type="range" id="optCornerThreshold" min="0" max="180" step="5" value="60">
-                        <span class="convert-slider-hint">Higher rounds off more corners.</span>
-                    </div>
-
-                    <div class="convert-slider" data-colour-only>
-                        <span class="convert-slider-label">Output mode</span>
-                        <div class="convert-segmented">
-                            <label><input type="radio" name="optMode" value="spline" checked><span>Spline</span></label>
-                            <label><input type="radio" name="optMode" value="polygon"><span>Polygon</span></label>
-                        </div>
-                        <span class="convert-slider-hint">Splines give smooth curves; polygons give straight edges.</span>
-                    </div>
-
-                    <button type="button" id="resetAdvanced" class="convert-reset">Reset to defaults</button>
-                </details>
+                <p class="convert-warn">
+                    <strong>The AI redraws the artwork.</strong> Wording, colours and layout stay the same, but
+                    letterforms can come back slightly different &mdash; check the comparison below before you
+                    download. Roughly $0.07 a conversion.
+                </p>
 
                 <button type="button" id="convertBtn" class="admin-btn-primary">Convert to Vector</button>
                 <div id="convertMsg" class="admin-msg"></div>
@@ -418,7 +362,6 @@
                     <div id="convertMeta" class="convert-meta"></div>
                     <div class="convert-download-row">
                         <button type="button" id="downloadConvertedSVG" class="download-button">Download SVG</button>
-                        <button type="button" id="downloadConvertedEPS" class="download-button">Download EPS</button>
                     </div>
                 </div>
             </div>

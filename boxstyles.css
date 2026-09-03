@@ -837,23 +837,6 @@ h2 {
 .dropzone-text { font-size: 13.5px; color: var(--text); word-break: break-all; }
 .dropzone-sub { font-size: 11.5px; color: var(--muted); }
 
-/* Output mode */
-.convert-mode {
-    border: 1.5px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 14px 16px 4px;
-    margin: 0 0 4px;
-}
-
-.convert-mode legend {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .6px;
-    text-transform: uppercase;
-    color: var(--muted);
-    padding: 0 6px;
-}
-
 .convert-mode-option {
     display: flex;
     align-items: flex-start;
@@ -866,101 +849,6 @@ h2 {
 .convert-mode-option span { display: flex; flex-direction: column; gap: 2px; }
 .convert-mode-option strong { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .convert-mode-option em { font-style: normal; font-size: 11.5px; color: var(--muted); }
-
-/* Advanced options */
-.convert-advanced {
-    margin-top: 14px;
-    border: 1.5px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 0 16px;
-    background: #fbfcfe;
-}
-
-.convert-advanced[open] { padding-bottom: 16px; }
-
-.convert-advanced summary {
-    cursor: pointer;
-    padding: 12px 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-    user-select: none;
-}
-
-.convert-advanced summary:hover { color: var(--blue); }
-.convert-advanced-hint { font-size: 11.5px; color: var(--muted); margin: 0 0 14px; line-height: 1.5; }
-
-.convert-toggle {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    font-size: 12.5px;
-    color: var(--text);
-    margin-bottom: 16px;
-    cursor: pointer;
-}
-
-.convert-toggle input { margin-top: 2px; flex: none; }
-.convert-toggle em { font-style: normal; color: var(--muted); }
-
-.convert-slider { margin-bottom: 16px; }
-
-.convert-slider label,
-.convert-slider-label {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 6px;
-}
-
-.convert-slider output {
-    font-variant-numeric: tabular-nums;
-    background: var(--blue);
-    color: #fff;
-    border-radius: 999px;
-    padding: 1px 9px;
-    font-size: 11.5px;
-    font-weight: 700;
-}
-
-.convert-slider input[type="range"] { width: 100%; accent-color: var(--blue); }
-.convert-slider-hint { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
-
-.convert-segmented { display: flex; gap: 8px; }
-.convert-segmented label { flex: 1; }
-.convert-segmented input { position: absolute; opacity: 0; pointer-events: none; }
-
-.convert-segmented span {
-    display: block;
-    text-align: center;
-    padding: 8px 0;
-    font-size: 12.5px;
-    border: 1.5px solid var(--border);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all 140ms ease;
-}
-
-.convert-segmented input:checked + span {
-    border-color: var(--blue);
-    background: #eef4ff;
-    color: var(--blue);
-    font-weight: 600;
-}
-
-.convert-reset {
-    background: none;
-    border: none;
-    color: var(--blue);
-    font-size: 12px;
-    font-family: inherit;
-    cursor: pointer;
-    padding: 0;
-    text-decoration: underline;
-}
 
 /* Result: original beside vector */
 .convert-compare {
