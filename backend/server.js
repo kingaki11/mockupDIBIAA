@@ -1,7 +1,8 @@
-// Server-side logo background removal API.
-// Replaces the client-side BFS flood-fill removeBackground() in boxscript.js
-// with a proper ML-based cutout (@imgly/background-removal-node — self-hosted
-// ONNX model, no external API key, no per-image cost).
+// Server-side logo background removal + vector tracing API.
+// Background removal is entirely our own: the same colour-distance mask
+// pipeline that drives tracing (traceMask.js) also produces the cutout, so
+// there is no external API, no key, no per-image cost and no ML model to
+// download on cold start. It handles any background colour, not just white.
 
 const fs = require('fs');
 const path = require('path');
@@ -10,10 +11,9 @@ const cors = require('cors');
 const multer = require('multer');
 const potrace = require('potrace');
 const Jimp = require('jimp');
-const { removeBackground } = require('@imgly/background-removal-node');
 const catalogStore = require('./catalog');
 const { potraceSvgToEps } = require('./svgToEps');
-const { buildTraceMask, buildGuidedMask } = require('./traceMask');
+const { buildTraceMask } = require('./traceMask');
 
 const app = express();
 const upload = multer({
@@ -204,15 +204,12 @@ app.post('/remove-bg', upload.single('logo'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded. Send it as multipart/form-data field "logo".' });
     }
-    if (req.file.mimetype !== 'image/png') {
-        return res.status(400).json({ error: 'Only PNG files are accepted.' });
+    if (!ACCEPTED_IMAGE_TYPES.has(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Only PNG, JPG or WEBP files are accepted.' });
     }
 
     try {
-        const inputBlob = new Blob([req.file.buffer], { type: 'image/png' });
-        const resultBlob = await removeBackground(inputBlob);
-        const outputBuffer = Buffer.from(await resultBlob.arrayBuffer());
-
+        const outputBuffer = await cutoutToPng(req.file.buffer);
         res.set('Content-Type', 'image/png');
         res.send(outputBuffer);
     } catch (err) {
@@ -259,30 +256,111 @@ const TRACE_MIN_LONG_EDGE = 1000;
 const TRACE_MAX_LONG_EDGE = 3000;
 
 
-// Background removal via remove.bg. Their model handles any background — solid,
-// gradient, photographic, coloured panel with a margin — far more reliably than
-// inferring the background from border pixels. The traced result is then a clean
-// silhouette of just the artwork. Key lives in the environment, never in source.
-async function removeBackgroundViaRemoveBg(buffer, mimetype) {
-    const apiKey = process.env.REMOVEBG_API_KEY;
-    if (!apiKey) return null;
 
-    const form = new FormData();
-    form.append('size', 'auto');
-    form.append('image_file', new Blob([buffer], { type: mimetype }), 'logo');
+// Most logos arrive as JPGs. Rejecting them was the root cause of "the
+// background isn't cleared": the frontend fell back to its white-only
+// flood-fill, left a coloured rectangle opaque, and the recolour pass then
+// painted that whole rectangle in the printing colour.
+const ACCEPTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
-    const res = await fetch('https://api.remove.bg/v1.0/removebg', {
-        method: 'POST',
-        headers: { 'X-Api-Key': apiKey },
-        body: form,
-    });
-    if (!res.ok) {
-        // Out of credits, bad key, rate limited — fall back to local removal
-        // rather than failing the whole conversion.
-        const detail = await res.text().catch(() => '');
-        throw new Error(`remove.bg ${res.status}: ${detail.slice(0, 200)}`);
+// Longest edge we cut out at. The mask work is O(pixels), and a logo placed on
+// a box never needs more resolution than this.
+const CUTOUT_MAX_LONG_EDGE = 2000;
+
+// Writes the artwork mask into the ORIGINAL image's alpha channel, so the logo
+// keeps its own colours (the "None" printing colour shows the artwork as-is)
+// while the background becomes fully transparent.
+//
+// The feather is deliberately inward-only: giving a *background* pixel partial
+// alpha would leave a fringe of background colour around the logo, which is
+// exactly the halo we are trying to get rid of. So background pixels go hard to
+// zero, and only artwork pixels on the outline are softened, by their own 3x3
+// coverage. That keeps edges smooth without importing any background colour.
+function applyMaskAsAlpha(image, mask) {
+    const { width: w, height: h, data } = image.bitmap;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            const i = p * 4;
+            if (!mask[p]) { data[i + 3] = 0; continue; }
+
+            let covered = 0;
+            let counted = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+                const yy = y + dy;
+                if (yy < 0 || yy >= h) continue;
+                for (let dx = -1; dx <= 1; dx++) {
+                    const xx = x + dx;
+                    if (xx < 0 || xx >= w) continue;
+                    counted++;
+                    if (mask[yy * w + xx]) covered++;
+                }
+            }
+            // +0.35 bias so only genuinely thin outline pixels lose opacity;
+            // a stroke's own body stays fully solid.
+            const coverage = counted ? covered / counted : 1;
+            data[i + 3] = Math.round(Math.min(1, coverage + 0.35) * 255);
+        }
     }
-    return Buffer.from(await res.arrayBuffer());
+    return image;
+}
+
+// Safety net for when the mask pipeline bails out (artwork bleeding to every
+// edge, so "the border is background" no longer holds): flood-fill inward from
+// the border, clearing whatever matches the border's own colour. Unlike the old
+// client-side fallback this is keyed to the sampled colour, not to white, so it
+// still works on dark or coloured backgrounds.
+function floodFillBackgroundAlpha(image) {
+    const { width: w, height: h, data } = image.bitmap;
+    const rs = [], gs = [], bs = [];
+    const sample = (x, y) => {
+        const i = (y * w + x) * 4;
+        rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+    };
+    for (let x = 0; x < w; x++) { sample(x, 0); sample(x, h - 1); }
+    for (let y = 0; y < h; y++) { sample(0, y); sample(w - 1, y); }
+    const median = (arr) => { arr.sort((a, b) => a - b); return arr[arr.length >> 1]; };
+    const br = median(rs), bgc = median(gs), bb = median(bs);
+
+    const TOLERANCE = 70 * 70; // squared per-pixel colour distance
+    const total = w * h;
+    const visited = new Uint8Array(total);
+    const queue = new Int32Array(total);
+    let head = 0, tail = 0;
+
+    const enqueue = (pos) => { if (!visited[pos]) { visited[pos] = 1; queue[tail++] = pos; } };
+    for (let x = 0; x < w; x++) { enqueue(x); enqueue((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { enqueue(y * w); enqueue(y * w + w - 1); }
+
+    while (head < tail) {
+        const pos = queue[head++];
+        const i = pos * 4;
+        const dr = data[i] - br, dg = data[i + 1] - bgc, db = data[i + 2] - bb;
+        if (data[i + 3] > 0 && dr * dr + dg * dg + db * db > TOLERANCE) continue;
+        data[i + 3] = 0;
+        const x = pos % w, y = (pos / w) | 0;
+        if (x > 0) enqueue(pos - 1);
+        if (x < w - 1) enqueue(pos + 1);
+        if (y > 0) enqueue(pos - w);
+        if (y < h - 1) enqueue(pos + w);
+    }
+    return image;
+}
+
+// One background-removal path shared by the mockup tab and the converter, so
+// both tabs always agree on what counts as background.
+async function cutoutToPng(buffer) {
+    const image = await Jimp.read(buffer);
+    const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
+    if (longEdge > CUTOUT_MAX_LONG_EDGE) {
+        image.scale(CUTOUT_MAX_LONG_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
+    }
+
+    const masked = buildTraceMask(image);
+    if (masked.stats.usable && masked.mask) applyMaskAsAlpha(image, masked.mask);
+    else floodFillBackgroundAlpha(image);
+
+    return image.getBufferAsync(Jimp.MIME_PNG);
 }
 
 async function prepareForTrace(buffer) {
@@ -305,13 +383,15 @@ async function prepareForTrace(buffer) {
     for (let y = 0; y < h; y += step) { sample(0, y); sample(w - 1, y); }
     const lightOnDark = (sum / count) < 128;
 
-    // Trace at the image's own resolution wherever possible. Upscaling first
-    // softens edges, and the mask threshold then captures that softness as
-    // extra weight — which is what previously fattened thin hairlines.
+    // Detect at the image's OWN resolution — never upscale before masking.
+    // Interpolating first turns a crisp margin/panel boundary into a colour
+    // ramp, and the panel test measures colour spread along exactly that
+    // boundary: the ramp inflates the spread past its limit, the coloured panel
+    // stops being recognised as background, and the trace comes out as the
+    // filled panel instead of the lettering. Any upscaling for potrace's benefit
+    // happens after masking, on the finished black-and-white mask.
     const longEdge = Math.max(w, h);
-    if (longEdge < TRACE_MIN_LONG_EDGE) {
-        image.scale(TRACE_MIN_LONG_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
-    } else if (longEdge > TRACE_MAX_LONG_EDGE) {
+    if (longEdge > TRACE_MAX_LONG_EDGE) {
         // Keeps tracing time bounded; still far more detail than any logo needs.
         image.scale(TRACE_MAX_LONG_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
     }
@@ -323,21 +403,14 @@ app.post('/convert-logo', requireAdmin, upload.single('logo'), async (req, res) 
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded. Send it as multipart/form-data field "logo".' });
     }
-    if (req.file.mimetype !== 'image/png' && req.file.mimetype !== 'image/jpeg') {
-        return res.status(400).json({ error: 'Only PNG or JPG files are accepted.' });
+    if (!ACCEPTED_IMAGE_TYPES.has(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Only PNG, JPG or WEBP files are accepted.' });
     }
 
-    // Single, default option now: black, maximum-detail trace — no color/detail
-    // pickers on the frontend to simplify the tab down to one upload + one button.
-    // remove.bg identifies the background reliably; the original image supplies
-    // the exact edges. Keep both rather than tracing the (low-resolution) cut-out.
-    let cutoutBuffer = null;
-    try {
-        cutoutBuffer = await removeBackgroundViaRemoveBg(req.file.buffer, req.file.mimetype);
-    } catch (bgErr) {
-        console.warn('remove.bg unavailable, falling back to local background detection:', bgErr.message);
-    }
-
+    // Single, default option: black, maximum-detail trace — no colour/detail
+    // pickers, so the tab stays one upload plus one button. Background detection
+    // is entirely local, from the image's own border colour, and runs against the
+    // full-resolution original so hairlines keep their true weight.
     let prepared;
     try {
         prepared = await prepareForTrace(req.file.buffer);
@@ -346,18 +419,17 @@ app.post('/convert-logo', requireAdmin, upload.single('logo'), async (req, res) 
         return res.status(400).json({ error: 'Could not read that image file.', detail: prepErr.message });
     }
 
-    // Prefer the guided mask (remove.bg for background, original pixels for
-    // edges); fall back to purely local background detection if unavailable.
-    let masked = null;
-    if (cutoutBuffer) {
-        try {
-            const guide = await Jimp.read(cutoutBuffer);
-            masked = buildGuidedMask(prepared.image, guide);
-        } catch (guideErr) {
-            console.warn('Guided mask failed, using local detection:', guideErr.message);
+    const masked = buildTraceMask(prepared.image);
+
+    // Now that detection is done, give potrace more pixels to fit curves to if
+    // the source was small. Scaling the binary mask can only smooth its outline;
+    // it cannot change which pixels were judged to be artwork.
+    if (masked.image) {
+        const maskEdge = Math.max(masked.image.bitmap.width, masked.image.bitmap.height);
+        if (maskEdge < TRACE_MIN_LONG_EDGE) {
+            masked.image.scale(TRACE_MIN_LONG_EDGE / maskEdge, Jimp.RESIZE_BICUBIC);
         }
     }
-    if (!masked) masked = buildTraceMask(prepared.image);
 
     try {
         let svg;

@@ -346,8 +346,8 @@ document.getElementById('saveLogoPosBtn').addEventListener('click', async functi
 function getSharedLogoFile(msg) {
     const file = document.getElementById('logoFile').files[0];
     if (!file) { showAdminMsg(msg, 'Upload a logo file above first.', true); return null; }
-    if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
-        showAdminMsg(msg, 'Only PNG or JPG files are accepted.', true);
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+        showAdminMsg(msg, 'Only PNG, JPG or WEBP files are accepted.', true);
         return null;
     }
     return file;

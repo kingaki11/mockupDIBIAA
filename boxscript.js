@@ -117,10 +117,15 @@ function trimCanvasToVisibleBounds(canvas) {
     const ctx = canvas.getContext('2d');
     const { data } = ctx.getImageData(0, 0, w, h);
 
+    // Anything fainter than this is matte fringe, not artwork. Trimming on
+    // alpha > 0 let a barely-visible halo dictate the bounds, which pushed the
+    // real logo off-centre once it was placed on the box.
+    const ALPHA_FLOOR = 12;
+
     let minX = w, minY = h, maxX = -1, maxY = -1;
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-            if (data[(y * w + x) * 4 + 3] > 0) {
+            if (data[(y * w + x) * 4 + 3] > ALPHA_FLOOR) {
                 if (x < minX) minX = x;
                 if (x > maxX) maxX = x;
                 if (y < minY) minY = y;
@@ -173,10 +178,12 @@ async function removeBackgroundViaBackend(file) {
     });
 }
 
-// Fallback background removal (used only if the backend is unreachable): BFS
-// flood-fill from the image edges, removing pixels connected to the border
-// that are near-white (tolerance 40/255 per channel). Unlike the backend's ML
-// model, this only handles white/near-white backgrounds specifically.
+// Fallback background removal, used only if the backend is unreachable. BFS
+// flood-fill inward from the image edges, clearing pixels connected to the
+// border that match the border's OWN colour. Keying it to the sampled colour
+// rather than to white is what lets it cope with dark or coloured backgrounds
+// too — the white-only version silently left those fully opaque, and the
+// recolour pass then filled the whole rectangle with the printing colour.
 function removeBackground(img) {
     const tempCanvas = document.createElement('canvas');
     const w = img.naturalWidth || img.width;
@@ -191,11 +198,25 @@ function removeBackground(img) {
     const visited = new Uint8Array(w * h);
     const queue = [];
     let head = 0;
-    const TOLERANCE = 40;
+
+    // Median of the border pixels: robust to a logo that touches one edge, and
+    // to JPEG noise, in a way a single corner sample is not.
+    const rs = [], gs = [], bs = [];
+    function sampleBorder(x, y) {
+        const i = (y * w + x) * 4;
+        rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+    }
+    for (let x = 0; x < w; x++) { sampleBorder(x, 0); sampleBorder(x, h - 1); }
+    for (let y = 0; y < h; y++) { sampleBorder(0, y); sampleBorder(w - 1, y); }
+    function median(arr) { arr.sort(function (a, b) { return a - b; }); return arr[arr.length >> 1]; }
+    const bgR = median(rs), bgG = median(gs), bgB = median(bs);
+
+    const TOLERANCE_SQ = 70 * 70;
 
     function isBackground(pi) {
         if (data[pi + 3] < 128) return true;
-        return data[pi] > 255 - TOLERANCE && data[pi + 1] > 255 - TOLERANCE && data[pi + 2] > 255 - TOLERANCE;
+        const dr = data[pi] - bgR, dg = data[pi + 1] - bgG, db = data[pi + 2] - bgB;
+        return dr * dr + dg * dg + db * db <= TOLERANCE_SQ;
     }
 
     function enqueue(pos) {
@@ -357,8 +378,8 @@ document.getElementById('logo').addEventListener('change', async function () {
         return;
     }
 
-    if (file.type !== 'image/png') {
-        Swal.fire({ icon: 'error', title: 'Wrong file type', text: 'Please upload a PNG file only.' });
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+        Swal.fire({ icon: 'error', title: 'Wrong file type', text: 'Please upload a PNG, JPG or WEBP image.' });
         this.value = '';
         processedLogoUrl = null;
         previewWrap.style.display = 'none';
@@ -843,8 +864,15 @@ function addLogoToCanvas(logoImg, canvas, printingColor, canvasWidth, canvasHeig
 
     const selectedColor = colorMap[printingColor.toLowerCase()] || [0, 0, 0];
 
+    // Only recolour pixels that are actually artwork. Recolouring everything
+    // with alpha > 0 painted the cutout's faint edge fringe in the printing
+    // colour too, which read as a coloured haze around the logo — and if the
+    // background hadn't been cleared at all, as a solid coloured rectangle.
+    // Clearing the fringe outright is what makes the colour change look clean.
+    const RECOLOR_ALPHA_FLOOR = 24;
+
     for (let i = 0; i < data.length; i += 4) {
-        if (data[i + 3] === 0) continue;
+        if (data[i + 3] <= RECOLOR_ALPHA_FLOOR) { data[i + 3] = 0; continue; }
         data[i] = selectedColor[0];
         data[i + 1] = selectedColor[1];
         data[i + 2] = selectedColor[2];
