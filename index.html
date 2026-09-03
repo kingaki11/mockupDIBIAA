@@ -357,6 +357,16 @@
                         <span>Remove the background <em>(turn off for photos, where the background is part of the picture)</em></span>
                     </label>
 
+                    <label class="convert-toggle" id="enhanceRow">
+                        <input type="checkbox" id="optEnhance">
+                        <span>Clean up with AI first <em id="enhanceHint">(redraws the artwork sharper and larger before tracing)</em></span>
+                    </label>
+                    <p class="convert-warn" id="enhanceWarn">
+                        <strong>Changes the artwork.</strong> The AI redraws rather than upscales &mdash; it keeps the
+                        wording and colours, but letterforms come back slightly different. Good for tidying a rough
+                        scan; not for a client&rsquo;s exact brand mark. Costs about $0.07 per conversion.
+                    </p>
+
                     <div class="convert-slider" data-colour-only>
                         <label for="optColorPrecision">Colour precision <output id="outColorPrecision">6</output></label>
                         <input type="range" id="optColorPrecision" min="1" max="8" step="1" value="6">
@@ -395,6 +405,10 @@
                         <figure class="convert-figure">
                             <figcaption>Original</figcaption>
                             <div id="convertOriginal" class="convert-preview"></div>
+                        </figure>
+                        <figure class="convert-figure" id="enhancedFigure" style="display:none;">
+                            <figcaption>AI cleaned up</figcaption>
+                            <div id="convertEnhanced" class="convert-preview"></div>
                         </figure>
                         <figure class="convert-figure">
                             <figcaption>Vector result</figcaption>

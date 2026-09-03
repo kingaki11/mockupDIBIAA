@@ -24,11 +24,13 @@ const {
     vectorizeToSvg,
     vectorizeHealth,
 } = require('./vectorize');
+const aiEnhance = require('./aiEnhance');
 
 // Tunable via Railway env vars; see .env.example.
 const MAX_UPLOAD_MB = clampInt(process.env.MAX_UPLOAD_MB, 1, 64, 15);
 const VTRACER_TIMEOUT_MS = clampInt(process.env.VTRACER_TIMEOUT_MS, 1000, 300000, 30000);
 const VTRACER_MAX_EDGE = clampInt(process.env.VTRACER_MAX_EDGE, 200, 4000, DEFAULT_MAX_EDGE);
+const OPENAI_TIMEOUT_MS = clampInt(process.env.OPENAI_TIMEOUT_MS, 5000, 600000, 120000);
 
 const app = express();
 const upload = multer({
@@ -506,6 +508,11 @@ app.get('/api/convert/health', async (req, res) => {
                 maxTraceEdge: VTRACER_MAX_EDGE,
             },
             defaults: VECTORIZE_DEFAULTS,
+            aiEnhance: {
+                available: aiEnhance.isConfigured(),
+                model: process.env.OPENAI_IMAGE_MODEL || aiEnhance.DEFAULT_MODEL,
+                quality: process.env.OPENAI_IMAGE_QUALITY || aiEnhance.DEFAULT_QUALITY,
+            },
         });
     } catch (err) {
         console.error('VTracer health check failed:', err);
@@ -526,18 +533,59 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
     // as a filled rectangle if you leave one there. Turn it off for photographs,
     // where the "background" is part of the subject.
     const wantsCutout = parseBool(req.body.removeBackground ?? req.query.removeBackground, true);
+    // Off unless asked for: it costs money per call, and the model redraws rather
+    // than upscales, so it must never run silently over a client's brand mark.
+    const wantsEnhance = parseBool(req.body.enhance ?? req.query.enhance, false);
 
-    // Decode first, so a corrupt or mislabelled file fails as a 400 here rather
-    // than as an opaque engine error later.
+    // Decode up front so a corrupt or mislabelled file fails as a 400 here rather
+    // than as an opaque engine error later — and so the AI step, if it runs, is
+    // never billed for a file that was never going to trace.
+    let sourceBuffer = req.file.buffer;
+    let sourceMime = req.file.mimetype;
+    let enhanceMeta = null;
+    let enhancedDataUrl = null;
+    try {
+        const probe = await Jimp.read(sourceBuffer);
+        if (wantsEnhance) {
+            const enhanced = await aiEnhance.enhanceImage(
+                sourceBuffer,
+                sourceMime,
+                { width: probe.bitmap.width, height: probe.bitmap.height },
+                OPENAI_TIMEOUT_MS,
+            );
+            sourceBuffer = enhanced.buffer;
+            sourceMime = 'image/png';
+            enhanceMeta = enhanced.meta;
+            // Returned so the UI can show the redraw beside the original — the
+            // whole point being that the user sees what the model changed.
+            enhancedDataUrl = 'data:image/png;base64,' + enhanced.buffer.toString('base64');
+        }
+    } catch (prepErr) {
+        if (prepErr.code === 'ENOKEY') {
+            return res.status(503).json({ error: 'AI enhancement is not configured on this server.' });
+        }
+        if (prepErr.code === 'EBADKEY') {
+            return res.status(502).json({ error: 'The AI image service rejected our API key.' });
+        }
+        if (prepErr.code === 'ETIMEDOUT') {
+            return res.status(504).json({ error: 'AI enhancement took too long. Try again, or convert without it.' });
+        }
+        if (prepErr.code === 'EUPSTREAM') {
+            return res.status(502).json({ error: 'AI enhancement failed: ' + prepErr.message });
+        }
+        console.warn('Rejected unreadable upload:', prepErr.message);
+        return res.status(400).json({ error: 'Could not read that image file.', detail: prepErr.message });
+    }
+
     let raster;
     let sourceSize;
     try {
         if (wantsCutout) {
-            raster = await cutoutToPng(req.file.buffer, VTRACER_MAX_EDGE);
+            raster = await cutoutToPng(sourceBuffer, VTRACER_MAX_EDGE);
             const decoded = await Jimp.read(raster);
             sourceSize = { width: decoded.bitmap.width, height: decoded.bitmap.height };
         } else {
-            const image = await Jimp.read(req.file.buffer);
+            const image = await Jimp.read(sourceBuffer);
             const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
             if (longEdge > VTRACER_MAX_EDGE) {
                 image.scale(VTRACER_MAX_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
@@ -557,7 +605,15 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
             // EPS is monochrome-only in svgToEps.js, so it is not offered for
             // colour output. Documented as out of scope for this pass.
             eps: null,
-            meta: { engine: 'vtracer', ms, backgroundRemoved: wantsCutout, options: opts, size: sourceSize },
+            enhancedPng: enhancedDataUrl,
+            meta: {
+                engine: 'vtracer',
+                ms,
+                backgroundRemoved: wantsCutout,
+                options: opts,
+                size: sourceSize,
+                aiEnhance: enhanceMeta,
+            },
         });
     } catch (traceErr) {
         if (traceErr.code === 'ETIMEDOUT') {

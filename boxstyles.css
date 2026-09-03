@@ -965,9 +965,23 @@ h2 {
 /* Result: original beside vector */
 .convert-compare {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* Two panes normally, three when the AI clean-up pane is shown. */
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 14px;
 }
+
+.convert-warn {
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: var(--radius-sm);
+    padding: 9px 11px;
+    margin: -8px 0 16px;
+}
+
+.convert-toggle.is-disabled { opacity: .5; cursor: not-allowed; }
 
 .convert-figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
 

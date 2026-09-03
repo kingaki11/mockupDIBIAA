@@ -372,6 +372,7 @@ function advancedValues() {
         cornerThreshold: document.getElementById('optCornerThreshold').value,
         mode: modeEl ? modeEl.value : 'spline',
         removeBackground: document.getElementById('optRemoveBg').checked,
+        enhance: document.getElementById('optEnhance').checked,
     };
 }
 
@@ -391,6 +392,7 @@ document.getElementById('resetAdvanced').addEventListener('click', function () {
     document.getElementById('outFilterSpeckle').textContent = ADVANCED_DEFAULTS.filterSpeckle;
     document.getElementById('outCornerThreshold').textContent = ADVANCED_DEFAULTS.cornerThreshold;
     document.getElementById('optRemoveBg').checked = ADVANCED_DEFAULTS.removeBg;
+    document.getElementById('optEnhance').checked = false;
     const spline = document.querySelector('input[name="optMode"][value="spline"]');
     if (spline) spline.checked = true;
 });
@@ -496,6 +498,7 @@ document.getElementById('convertBtn').addEventListener('click', async function (
         formData.append('cornerThreshold', adv.cornerThreshold);
         formData.append('mode', adv.mode);
         formData.append('removeBackground', String(adv.removeBackground));
+        formData.append('enhance', String(adv.enhance));
     } else {
         formData.append('logo', file);
     }
@@ -504,7 +507,9 @@ document.getElementById('convertBtn').addEventListener('click', async function (
     this.classList.add('is-busy');
     const originalLabel = this.textContent;
     this.textContent = 'Converting…';
-    showAdminMsg(msg, 'Tracing… this can take a few seconds.', false);
+    showAdminMsg(msg, adv.enhance
+        ? 'Cleaning up with AI, then tracing… this takes around 20 seconds.'
+        : 'Tracing… this can take a few seconds.', false);
 
     try {
         const res = await fetch(BACKEND_URL + (colour ? '/api/convert/svg' : '/convert-logo'), {
@@ -527,12 +532,34 @@ document.getElementById('convertBtn').addEventListener('click', async function (
 
         renderVectorPreview(data.svg);
 
+        // Show what the AI actually produced, so the difference from the
+        // original is visible before anyone downloads the trace of it.
+        const enhancedFigure = document.getElementById('enhancedFigure');
+        const enhancedTarget = document.getElementById('convertEnhanced');
+        enhancedTarget.innerHTML = '';
+        if (data.enhancedPng) {
+            const enhancedImg = document.createElement('img');
+            enhancedImg.src = data.enhancedPng;
+            enhancedImg.alt = 'AI cleaned-up version';
+            enhancedTarget.appendChild(enhancedImg);
+            enhancedFigure.style.display = '';
+        } else {
+            enhancedFigure.style.display = 'none';
+        }
+
         const meta = data.meta;
-        document.getElementById('convertMeta').textContent = meta
-            ? meta.size.width + '×' + meta.size.height + ' · traced in ' + meta.ms + ' ms · '
-              + (data.svg.length / 1024).toFixed(0) + ' KB SVG'
-              + (meta.backgroundRemoved ? ' · background removed' : '')
-            : (data.svg.length / 1024).toFixed(0) + ' KB SVG';
+        let summary = (data.svg.length / 1024).toFixed(0) + ' KB SVG';
+        if (meta) {
+            summary = meta.size.width + '×' + meta.size.height + ' · traced in ' + meta.ms + ' ms · ' + summary;
+            if (meta.backgroundRemoved) summary += ' · background removed';
+            if (meta.aiEnhance) {
+                summary += ' · AI ' + meta.aiEnhance.quality;
+                if (meta.aiEnhance.estimatedCostUsd !== null && meta.aiEnhance.estimatedCostUsd !== undefined) {
+                    summary += ' (~$' + meta.aiEnhance.estimatedCostUsd.toFixed(3) + ')';
+                }
+            }
+        }
+        document.getElementById('convertMeta').textContent = summary;
 
         previewWrap.style.display = 'block';
         syncModeUi();
@@ -547,6 +574,22 @@ fetch(BACKEND_URL + '/api/convert/health')
         MAX_UPLOAD_MB = health.limits.maxUploadMb;
         const label = document.getElementById('maxUploadLabel');
         if (label) label.textContent = MAX_UPLOAD_MB;
+
+        // Don't offer the AI step if the server has no key for it — a checkbox
+        // that can only ever return 503 is worse than no checkbox.
+        const enhanceBox = document.getElementById('optEnhance');
+        const available = health.aiEnhance && health.aiEnhance.available;
+        if (!available) {
+            enhanceBox.checked = false;
+            enhanceBox.disabled = true;
+            document.getElementById('enhanceRow').classList.add('is-disabled');
+            document.getElementById('enhanceHint').textContent = '(not configured on the server)';
+            document.getElementById('enhanceWarn').style.display = 'none';
+        } else {
+            document.getElementById('enhanceHint').textContent =
+                '(redraws the artwork sharper and larger before tracing, using ' + health.aiEnhance.model
+                + ' at ' + health.aiEnhance.quality + ' quality)';
+        }
     })
     .catch(function () { /* keep the default; the convert call will surface any real problem */ });
         showAdminMsg(msg, 'Traced successfully — download below, or import the SVG into CorelDRAW.', false);
