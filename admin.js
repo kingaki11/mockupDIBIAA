@@ -475,10 +475,17 @@ document.getElementById('convertBtn').addEventListener('click', async function (
         renderVectorPreview(data.svg);
 
         const meta = data.meta || {};
+        const ai = meta.aiEnhance;
         let summary = (data.svg.length / 1024).toFixed(0) + ' KB SVG';
         if (meta.size) summary = meta.size.width + '×' + meta.size.height + ' · traced in ' + meta.ms + ' ms · ' + summary;
-        if (meta.aiEnhance && meta.aiEnhance.estimatedCostUsd != null) {
-            summary += ' · AI ' + meta.aiEnhance.quality + ' (~$' + meta.aiEnhance.estimatedCostUsd.toFixed(3) + ')';
+        if (ai && ai.estimatedCostUsd != null) {
+            summary += ' · AI ' + ai.quality + ' (~$' + ai.estimatedCostUsd.toFixed(3) + ')';
+        }
+        if (ai && ai.verified === true) {
+            summary += ' · wording checked' + (ai.expectedText ? ' “' + ai.expectedText + '”' : '');
+            if (ai.attempts > 1) summary += ' after ' + ai.attempts + ' tries';
+        } else if (ai && ai.verified === null) {
+            summary += ' · wording not checked';
         }
         document.getElementById('convertMeta').textContent = summary;
 
@@ -487,9 +494,16 @@ document.getElementById('convertBtn').addEventListener('click', async function (
         if (meta.aiEnhanceError) {
             // Degraded, not failed: they still have a usable vector, but it was
             // traced from the original, so say so rather than let them wonder.
-            showAdminMsg(msg, 'Traced — but ' + meta.aiEnhanceError + ', so this is a trace of your original image.', true);
+            showAdminMsg(msg, 'Traced — but ' + meta.aiEnhanceError + '.', true);
+        } else if (ai && ai.shapesMatch === false) {
+            // Flattening a 3D or multi-tone mark to one colour legitimately
+            // changes its shape, so this is a prompt to look rather than a fault.
+            showAdminMsg(msg, 'Done, and the wording was checked against your original. '
+                + 'The logo mark came out differently though — compare the panes above before you download.', true);
+        } else if (ai && ai.verified === null) {
+            showAdminMsg(msg, 'Done — but the wording could not be auto-checked this time, so compare the panes above before you download.', true);
         } else {
-            showAdminMsg(msg, 'Done — download below, or import the SVG into CorelDRAW.', false);
+            showAdminMsg(msg, 'Done — wording checked against your original. Download below, or import the SVG into CorelDRAW.', false);
         }
     } catch (err) {
         // The upload is deliberately kept, so the user can just press Convert again.

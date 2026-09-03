@@ -14,6 +14,11 @@
 // so the difference is visible before anyone downloads it.
 
 const OPENAI_IMAGE_EDITS_URL = 'https://api.openai.com/v1/images/edits';
+const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
+
+// Cheap vision model used only to read and compare wording. Roughly $0.003 a
+// call against $0.067 for a redraw, so verifying is close to free.
+const VERIFY_MODEL = 'gpt-4o-mini';
 
 const DEFAULT_MODEL = 'gpt-image-1';
 const DEFAULT_QUALITY = 'medium';   // low | medium | high — medium is the cost/quality middle
@@ -30,13 +35,17 @@ const RATE_IMAGE_OUTPUT_PER_M = 40;
 // drifts from the image it was traced from, while flat black comes back as
 // clean single-colour paths.
 const PROMPT = [
-    'Redraw this exact logo as flat, solid black artwork on a fully transparent background.',
-    'Keep the lettering, wording, spelling, typeface, proportions, spacing and layout identical to the original,',
-    'including every decorative element such as sparkles, stars, rules and sub-text.',
+    'Reproduce this logo EXACTLY as flat, solid black artwork on a fully transparent background.',
+    'This is a real company logo: it must be copied faithfully, not reinterpreted or redesigned.',
+    'Copy the wording character for character — same spelling, same number of letters, same case, same word order.',
+    'Copy the typeface, letter shapes, proportions, spacing, alignment and layout.',
+    'Copy every icon, symbol, mark or emblem in its original form and position — do NOT substitute,',
+    'simplify, restyle or replace any mark with a different shape.',
+    'Keep every decorative element such as sparkles, stars, rules and sub-text.',
     'Render everything in pure solid black (#000000).',
-    'No gradients, no gold, no metallic effect, no shading, no highlights, no 3D bevel, no drop shadow, no outline.',
+    'No gradients, no colour, no metallic effect, no shading, no highlights, no 3D bevel, no drop shadow, no outline.',
     'Enclosed areas inside letters must stay fully transparent, not filled.',
-    'The result must look like a clean single-colour vector logo ready for printing.',
+    'The result must look like a clean single-colour vector version of the SAME logo, ready for printing.',
 ].join(' ');
 
 // gpt-image-1 only accepts these three sizes, so pick the one matching the
@@ -64,8 +73,91 @@ function isConfigured() {
     return Boolean(process.env.OPENAI_API_KEY);
 }
 
+async function chatJson(messages, timeoutMs) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+        const err = new Error('AI is not configured on this server.');
+        err.code = 'ENOKEY';
+        throw err;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(OPENAI_CHAT_URL, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: process.env.OPENAI_VERIFY_MODEL || VERIFY_MODEL,
+                temperature: 0,
+                response_format: { type: 'json_object' },
+                messages,
+            }),
+            signal: controller.signal,
+        });
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            throw new Error(`verify call returned ${res.status}: ${detail.slice(0, 200)}`);
+        }
+        const payload = await res.json();
+        const content = payload.choices && payload.choices[0] && payload.choices[0].message.content;
+        return { data: JSON.parse(content), usage: payload.usage || null };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function imagePart(buffer, mimetype) {
+    return {
+        type: 'image_url',
+        image_url: { url: `data:${mimetype};base64,${buffer.toString('base64')}`, detail: 'high' },
+    };
+}
+
+// Reads the wording off the original so it can be pinned into the redraw prompt.
+// Telling the model the exact string it must reproduce is far more reliable than
+// asking it to copy what it sees.
+async function readLogoText(buffer, mimetype, timeoutMs) {
+    const { data } = await chatJson([{
+        role: 'user',
+        content: [
+            { type: 'text', text:
+                'Transcribe every character of text in this logo exactly, preserving spelling, '
+                + 'letter count, case and word order. Reply as JSON: {"text":"<exact text, empty string if none>"}.' },
+            imagePart(buffer, mimetype),
+        ],
+    }], timeoutMs);
+    return typeof data.text === 'string' ? data.text.trim() : '';
+}
+
+// Compares original against redraw in ONE call. Two independent transcriptions
+// would each carry their own reading errors and disagree on correct output;
+// asking for a direct comparison sidesteps that. Verified on a wordmark where
+// dropping a single letter was correctly flagged.
+async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
+    const { data } = await chatJson([{
+        role: 'user',
+        content: [
+            { type: 'text', text:
+                'IMAGE 1 is an original logo. IMAGE 2 is a redraw of it. Compare them strictly. '
+                + 'Reply as JSON: {"text1":"<exact text in image 1>","text2":"<exact text in image 2>",'
+                + '"text_matches":true|false,"shapes_match":true|false}. '
+                + 'text_matches must be false if the wording differs by even one character, '
+                + 'including a single missing or added letter. '
+                + 'shapes_match must be false if any non-text symbol, icon or mark differs in form.' },
+            imagePart(originalBuf, originalMime),
+            imagePart(redrawBuf, 'image/png'),
+        ],
+    }], timeoutMs);
+    return {
+        text1: data.text1 || '',
+        text2: data.text2 || '',
+        textMatches: data.text_matches !== false,
+        shapesMatch: data.shapes_match !== false,
+    };
+}
+
 // Returns a PNG buffer of the redrawn artwork, plus what it cost.
-async function enhanceImage(buffer, mimetype, { width, height }, timeoutMs) {
+async function enhanceImage(buffer, mimetype, { width, height }, timeoutMs, exactText) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
         const err = new Error('AI enhancement is not configured on this server.');
@@ -80,7 +172,13 @@ async function enhanceImage(buffer, mimetype, { width, height }, timeoutMs) {
     const form = new FormData();
     form.append('model', model);
     form.append('image', new Blob([buffer], { type: mimetype }), 'logo.png');
-    form.append('prompt', PROMPT);
+    // Pinning the exact string is the single biggest reliability win: left to
+    // copy what it sees, the model drops letters — one real logo came back as
+    // "dbiaa" instead of "dibiaa".
+    const prompt = exactText
+        ? PROMPT + ` The text must read EXACTLY "${exactText}" — every character, same spelling, same letter count. Do not drop, add or alter a single letter.`
+        : PROMPT;
+    form.append('prompt', prompt);
     form.append('quality', quality);
     form.append('size', size);
     form.append('background', 'transparent');
@@ -138,4 +236,11 @@ async function enhanceImage(buffer, mimetype, { width, height }, timeoutMs) {
     };
 }
 
-module.exports = { enhanceImage, isConfigured, DEFAULT_MODEL, DEFAULT_QUALITY };
+module.exports = {
+    enhanceImage,
+    readLogoText,
+    verifyRedraw,
+    isConfigured,
+    DEFAULT_MODEL,
+    DEFAULT_QUALITY,
+};

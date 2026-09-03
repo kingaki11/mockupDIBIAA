@@ -623,24 +623,74 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
     }
 
     if (wantsEnhance) {
-        // The AI step is now the default path, so a failure here must not take
-        // the whole conversion down with it. Out of credit, a revoked key, a slow
-        // day at OpenAI — the user still gets a vector traced from their original,
+        // The AI step is the default path, so a failure here must not take the
+        // whole conversion down with it. Out of credit, a revoked key, a slow day
+        // at OpenAI — the user still gets a vector traced from their original,
         // and the response says why it is not the enhanced one.
+        const originalBuffer = req.file.buffer;
+        const originalMime = req.file.mimetype;
         try {
-            const enhanced = await aiEnhance.enhanceImage(
-                sourceBuffer,
-                sourceMime,
-                { width: probe.bitmap.width, height: probe.bitmap.height },
-                OPENAI_TIMEOUT_MS,
-            );
-            sourceBuffer = await forceBlack(enhanced.buffer);
-            sourceMime = 'image/png';
-            enhanceMeta = enhanced.meta;
-            // Returned so the UI can show the redraw beside the original — the
-            // whole point being that the user sees what the model changed.
-            // Preview the blackened version, so what is shown is what gets traced.
-            enhancedDataUrl = 'data:image/png;base64,' + sourceBuffer.toString('base64');
+            // Read the wording first so it can be pinned into the prompt. A model
+            // told the exact string to reproduce drops letters far less often than
+            // one asked to copy what it sees.
+            let exactText = '';
+            try {
+                exactText = await aiEnhance.readLogoText(originalBuffer, originalMime, OPENAI_TIMEOUT_MS);
+            } catch (textErr) {
+                console.warn('Could not pre-read logo text:', textErr.message);
+            }
+
+            // Then check the wording actually survived. A redraw that silently
+            // drops a letter is worse than no redraw at all — it is a corrupted
+            // brand mark that still looks plausible. So try twice, and if the
+            // wording still does not match, throw the redraw away and trace the
+            // original, which cannot lose a character because nothing
+            // reinterprets it.
+            const attempts = [];
+            let accepted = null;
+            for (let attempt = 1; attempt <= 2 && !accepted; attempt++) {
+                const enhanced = await aiEnhance.enhanceImage(
+                    originalBuffer,
+                    originalMime,
+                    { width: probe.bitmap.width, height: probe.bitmap.height },
+                    OPENAI_TIMEOUT_MS,
+                    exactText,
+                );
+                const black = await forceBlack(enhanced.buffer);
+
+                let check = null;
+                try {
+                    check = await aiEnhance.verifyRedraw(originalBuffer, originalMime, black, OPENAI_TIMEOUT_MS);
+                } catch (verifyErr) {
+                    console.warn('Redraw verification unavailable:', verifyErr.message);
+                }
+
+                attempts.push({ buffer: black, meta: enhanced.meta, check });
+
+                // Unverifiable is not the same as wrong: keep the redraw but flag
+                // that it could not be checked, rather than disabling the feature
+                // every time the verifier has a bad minute.
+                if (!check || check.textMatches) accepted = attempts[attempts.length - 1];
+            }
+
+            if (accepted) {
+                sourceBuffer = accepted.buffer;
+                sourceMime = 'image/png';
+                enhanceMeta = {
+                    ...accepted.meta,
+                    attempts: attempts.length,
+                    expectedText: exactText || null,
+                    verified: accepted.check ? accepted.check.textMatches : null,
+                    shapesMatch: accepted.check ? accepted.check.shapesMatch : null,
+                };
+                // Preview the blackened version, so what is shown is what gets traced.
+                enhancedDataUrl = 'data:image/png;base64,' + sourceBuffer.toString('base64');
+            } else {
+                const last = attempts[attempts.length - 1].check;
+                enhanceError = 'the AI changed the wording (it produced "' + last.text2
+                    + '" instead of "' + last.text1 + '"), so your original was traced instead to keep the logo exact';
+                console.warn('AI redraw rejected after', attempts.length, 'attempts —', enhanceError);
+            }
         } catch (aiErr) {
             const reasons = {
                 ENOKEY: 'AI clean-up is not configured on the server',
@@ -673,6 +723,19 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
             const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
             if (longEdge > VTRACER_MAX_EDGE) {
                 image.scale(VTRACER_MAX_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
+            }
+            raster = await image.getBufferAsync(Jimp.MIME_PNG);
+        }
+
+        // Asking for the AI pass is a request for black print-ready artwork, and
+        // that has to hold even when the redraw was rejected for changing the
+        // wording. Blackening the traced original keeps the promise without
+        // reintroducing the risk — nothing has been reinterpreted, only recoloured.
+        if (wantsEnhance) {
+            const { data } = image.bitmap;
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] === 0) continue;
+                data[i] = 0; data[i + 1] = 0; data[i + 2] = 0;
             }
             raster = await image.getBufferAsync(Jimp.MIME_PNG);
         }
