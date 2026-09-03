@@ -8,17 +8,32 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const multer = require('multer');
 const potrace = require('potrace');
 const Jimp = require('jimp');
 const catalogStore = require('./catalog');
 const { potraceSvgToEps } = require('./svgToEps');
 const { buildTraceMask } = require('./traceMask');
+const {
+    DEFAULTS: VECTORIZE_DEFAULTS,
+    DEFAULT_MAX_EDGE,
+    parseVectorizeOptions,
+    parseBool,
+    clampInt,
+    vectorizeToSvg,
+    vectorizeHealth,
+} = require('./vectorize');
+
+// Tunable via Railway env vars; see .env.example.
+const MAX_UPLOAD_MB = clampInt(process.env.MAX_UPLOAD_MB, 1, 64, 15);
+const VTRACER_TIMEOUT_MS = clampInt(process.env.VTRACER_TIMEOUT_MS, 1000, 300000, 30000);
+const VTRACER_MAX_EDGE = clampInt(process.env.VTRACER_MAX_EDGE, 200, 4000, DEFAULT_MAX_EDGE);
 
 const app = express();
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max upload
+    limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
 });
 
 // Allow the deployed frontend (and local dev) to call this API cross-origin.
@@ -31,6 +46,10 @@ const allowedOrigins = (process.env.ALLOWED_ORIGIN || '*')
 app.use(cors({
     origin: allowedOrigins.includes('*') ? true : allowedOrigins,
 }));
+
+// Traced SVG is highly repetitive text, so it gzips by roughly 10:1. That is the
+// difference between a photo conversion sending ~9.5MB and ~1MB over the wire.
+app.use(compression());
 
 app.get('/', (req, res) => {
     res.json({ status: 'ok', service: 'mockupdibiaa-backend' });
@@ -349,11 +368,11 @@ function floodFillBackgroundAlpha(image) {
 
 // One background-removal path shared by the mockup tab and the converter, so
 // both tabs always agree on what counts as background.
-async function cutoutToPng(buffer) {
+async function cutoutToPng(buffer, maxEdge = CUTOUT_MAX_LONG_EDGE) {
     const image = await Jimp.read(buffer);
     const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
-    if (longEdge > CUTOUT_MAX_LONG_EDGE) {
-        image.scale(CUTOUT_MAX_LONG_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
+    if (longEdge > maxEdge) {
+        image.scale(maxEdge / longEdge, Jimp.RESIZE_BICUBIC);
     }
 
     const masked = buildTraceMask(image);
@@ -464,6 +483,106 @@ app.post('/convert-logo', requireAdmin, upload.single('logo'), async (req, res) 
         console.error('Vector trace failed:', traceErr);
         res.status(500).json({ error: 'Vector trace failed.', detail: traceErr.message });
     }
+});
+
+// ── Full-colour vectorisation (VTracer) ──────────────────────────────────────
+// Sits alongside /convert-logo rather than replacing it: this route produces
+// full-colour SVG suitable for general artwork, while /convert-logo stays the
+// black-silhouette path used for box printing. VTracer's own binary mode is not
+// a substitute — it ignores the alpha channel and turns a cut-out logo into
+// white-on-black.
+
+// Deploy debugging: confirms the prebuilt native binary for this container's
+// platform actually loaded, which is the failure mode worth catching early.
+app.get('/api/convert/health', async (req, res) => {
+    try {
+        const health = await vectorizeHealth();
+        res.json({
+            status: 'ok',
+            ...health,
+            limits: {
+                maxUploadMb: MAX_UPLOAD_MB,
+                timeoutMs: VTRACER_TIMEOUT_MS,
+                maxTraceEdge: VTRACER_MAX_EDGE,
+            },
+            defaults: VECTORIZE_DEFAULTS,
+        });
+    } catch (err) {
+        console.error('VTracer health check failed:', err);
+        res.status(500).json({ status: 'error', engine: 'vtracer', detail: err.message });
+    }
+});
+
+app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded. Send it as multipart/form-data field "image".' });
+    }
+    if (!ACCEPTED_IMAGE_TYPES.has(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Only PNG, JPG or WEBP files are accepted.' });
+    }
+
+    const opts = parseVectorizeOptions({ ...req.query, ...req.body });
+    // On by default: this is a logo tool, and VTracer traces a background panel
+    // as a filled rectangle if you leave one there. Turn it off for photographs,
+    // where the "background" is part of the subject.
+    const wantsCutout = parseBool(req.body.removeBackground ?? req.query.removeBackground, true);
+
+    // Decode first, so a corrupt or mislabelled file fails as a 400 here rather
+    // than as an opaque engine error later.
+    let raster;
+    let sourceSize;
+    try {
+        if (wantsCutout) {
+            raster = await cutoutToPng(req.file.buffer, VTRACER_MAX_EDGE);
+            const decoded = await Jimp.read(raster);
+            sourceSize = { width: decoded.bitmap.width, height: decoded.bitmap.height };
+        } else {
+            const image = await Jimp.read(req.file.buffer);
+            const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
+            if (longEdge > VTRACER_MAX_EDGE) {
+                image.scale(VTRACER_MAX_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
+            }
+            sourceSize = { width: image.bitmap.width, height: image.bitmap.height };
+            raster = await image.getBufferAsync(Jimp.MIME_PNG);
+        }
+    } catch (readErr) {
+        console.warn('Rejected unreadable upload:', readErr.message);
+        return res.status(400).json({ error: 'Could not read that image file.', detail: readErr.message });
+    }
+
+    try {
+        const { svg, ms } = await vectorizeToSvg(raster, opts, VTRACER_TIMEOUT_MS);
+        res.json({
+            svg,
+            // EPS is monochrome-only in svgToEps.js, so it is not offered for
+            // colour output. Documented as out of scope for this pass.
+            eps: null,
+            meta: { engine: 'vtracer', ms, backgroundRemoved: wantsCutout, options: opts, size: sourceSize },
+        });
+    } catch (traceErr) {
+        if (traceErr.code === 'ETIMEDOUT') {
+            console.error('VTracer timed out:', traceErr.message);
+            return res.status(504).json({ error: 'Conversion took too long. Try a smaller image or fewer colours.' });
+        }
+        console.error('VTracer failed:', traceErr);
+        res.status(500).json({ error: 'Vector trace failed.' });
+    }
+});
+
+// Multer rejects an oversized upload by throwing rather than calling the route,
+// so without this the client sees an HTML error page instead of a usable message.
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: `File is too large. Maximum upload size is ${MAX_UPLOAD_MB} MB.` });
+        }
+        return res.status(400).json({ error: `Upload rejected: ${err.message}` });
+    }
+    if (err) {
+        console.error('Unhandled error:', err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+    next();
 });
 
 const PORT = process.env.PORT || 3000;

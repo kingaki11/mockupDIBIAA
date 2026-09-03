@@ -340,21 +340,144 @@ document.getElementById('saveLogoPosBtn').addEventListener('click', async functi
     }
 });
 
-// ── Convert Logo (PNG/JPG → vector trace: SVG + EPS) ──
+// ── Convert to Vector (JPG/PNG/WEBP → SVG) ──
+//
+// Two engines behind one button. "Full colour" goes to /api/convert/svg, backed
+// by VTracer, which reproduces the original colours. "Black silhouette" goes to
+// the older /convert-logo, backed by potrace, which also returns an EPS. VTracer
+// has a binary mode of its own but it ignores the alpha channel and inverts a
+// cut-out logo into white-on-black, so the two engines are not interchangeable.
 
-// Reads the shared logo upload for the Convert to Vector action.
-function getSharedLogoFile(msg) {
-    const file = document.getElementById('logoFile').files[0];
-    if (!file) { showAdminMsg(msg, 'Upload a logo file above first.', true); return null; }
-    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
-        showAdminMsg(msg, 'Only PNG, JPG or WEBP files are accepted.', true);
-        return null;
-    }
-    return file;
-}
+let MAX_UPLOAD_MB = 15;                 // provisional; the backend's real limit is read below
+const INLINE_SVG_LIMIT = 1024 * 1024;   // above this, preview via blob URL, not innerHTML
+
+const ADVANCED_DEFAULTS = { colorPrecision: 6, filterSpeckle: 4, cornerThreshold: 60, mode: 'spline', removeBg: true };
 
 let convertedSVG = null;
 let convertedEPS = null;
+let selectedLogoFile = null;   // kept so settings can be changed and re-run without re-uploading
+let originalObjectUrl = null;
+let previewObjectUrl = null;
+
+function convertMode() {
+    const checked = document.querySelector('input[name="convertMode"]:checked');
+    return checked ? checked.value : 'color';
+}
+
+function advancedValues() {
+    const modeEl = document.querySelector('input[name="optMode"]:checked');
+    return {
+        colorPrecision: document.getElementById('optColorPrecision').value,
+        filterSpeckle: document.getElementById('optFilterSpeckle').value,
+        cornerThreshold: document.getElementById('optCornerThreshold').value,
+        mode: modeEl ? modeEl.value : 'spline',
+        removeBackground: document.getElementById('optRemoveBg').checked,
+    };
+}
+
+// Live slider read-outs, so a value is visible without moving the handle.
+['ColorPrecision', 'FilterSpeckle', 'CornerThreshold'].forEach(function (name) {
+    const input = document.getElementById('opt' + name);
+    const out = document.getElementById('out' + name);
+    if (!input || !out) return;
+    input.addEventListener('input', function () { out.textContent = input.value; });
+});
+
+document.getElementById('resetAdvanced').addEventListener('click', function () {
+    document.getElementById('optColorPrecision').value = ADVANCED_DEFAULTS.colorPrecision;
+    document.getElementById('optFilterSpeckle').value = ADVANCED_DEFAULTS.filterSpeckle;
+    document.getElementById('optCornerThreshold').value = ADVANCED_DEFAULTS.cornerThreshold;
+    document.getElementById('outColorPrecision').textContent = ADVANCED_DEFAULTS.colorPrecision;
+    document.getElementById('outFilterSpeckle').textContent = ADVANCED_DEFAULTS.filterSpeckle;
+    document.getElementById('outCornerThreshold').textContent = ADVANCED_DEFAULTS.cornerThreshold;
+    document.getElementById('optRemoveBg').checked = ADVANCED_DEFAULTS.removeBg;
+    const spline = document.querySelector('input[name="optMode"][value="spline"]');
+    if (spline) spline.checked = true;
+});
+
+// The colour-only knobs mean nothing to the potrace path, so hide them there
+// rather than leaving controls on screen that silently do nothing.
+function syncModeUi() {
+    const isColour = convertMode() === 'color';
+    document.querySelectorAll('[data-colour-only]').forEach(function (el) {
+        el.style.display = isColour ? '' : 'none';
+    });
+    document.getElementById('downloadConvertedEPS').style.display = convertedEPS ? '' : 'none';
+}
+document.querySelectorAll('input[name="convertMode"]').forEach(function (el) {
+    el.addEventListener('change', syncModeUi);
+});
+
+// ── Upload: drag-and-drop plus click-to-browse ──
+
+const dropzone = document.getElementById('logoDropzone');
+const logoInput = document.getElementById('logoFile');
+
+function acceptLogoFile(file) {
+    const msg = document.getElementById('logoFileMsg');
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+        showAdminMsg(msg, 'Only PNG, JPG or WEBP files are accepted.', true);
+        return;
+    }
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        showAdminMsg(msg, 'That file is ' + (file.size / 1048576).toFixed(1) + ' MB. The limit is ' + MAX_UPLOAD_MB + ' MB.', true);
+        return;
+    }
+
+    selectedLogoFile = file;
+    if (originalObjectUrl) URL.revokeObjectURL(originalObjectUrl);
+    originalObjectUrl = URL.createObjectURL(file);
+
+    dropzone.classList.add('has-file');
+    dropzone.querySelector('.dropzone-text').innerHTML = '<strong>' + file.name + '</strong>';
+    dropzone.querySelector('.dropzone-sub').textContent = (file.size / 1048576).toFixed(2) + ' MB — click to choose a different file';
+    showAdminMsg(msg, 'Ready to convert.', false);
+}
+
+dropzone.addEventListener('click', function () { logoInput.click(); });
+dropzone.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); logoInput.click(); }
+});
+logoInput.addEventListener('change', function () { acceptLogoFile(this.files[0]); });
+
+['dragenter', 'dragover'].forEach(function (evt) {
+    dropzone.addEventListener(evt, function (e) { e.preventDefault(); dropzone.classList.add('dragging'); });
+});
+['dragleave', 'drop'].forEach(function (evt) {
+    dropzone.addEventListener(evt, function (e) { e.preventDefault(); dropzone.classList.remove('dragging'); });
+});
+dropzone.addEventListener('drop', function (e) {
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) acceptLogoFile(file);
+});
+
+// Kept for callers that still expect the old accessor.
+function getSharedLogoFile(msg) {
+    if (!selectedLogoFile) { showAdminMsg(msg, 'Upload an image above first.', true); return null; }
+    return selectedLogoFile;
+}
+
+// ── Convert ──
+
+function renderVectorPreview(svg) {
+    const target = document.getElementById('convertPreview');
+    if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
+
+    // A photo can vectorise into several megabytes of path data. Parsing that as
+    // live DOM locks the tab up, so hand anything large to the renderer as an
+    // image instead — it looks identical and stays responsive.
+    if (svg.length > INLINE_SVG_LIMIT) {
+        previewObjectUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+        target.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = previewObjectUrl;
+        img.alt = 'Vector result';
+        target.appendChild(img);
+    } else {
+        target.innerHTML = svg;
+    }
+}
 
 document.getElementById('convertBtn').addEventListener('click', async function () {
     const msg = document.getElementById('convertMsg');
@@ -362,30 +485,79 @@ document.getElementById('convertBtn').addEventListener('click', async function (
     const file = getSharedLogoFile(msg);
     if (!file) return;
 
+    const colour = convertMode() === 'color';
+    const adv = advancedValues();
+
     const formData = new FormData();
-    formData.append('logo', file);
+    if (colour) {
+        formData.append('image', file);
+        formData.append('colorPrecision', adv.colorPrecision);
+        formData.append('filterSpeckle', adv.filterSpeckle);
+        formData.append('cornerThreshold', adv.cornerThreshold);
+        formData.append('mode', adv.mode);
+        formData.append('removeBackground', String(adv.removeBackground));
+    } else {
+        formData.append('logo', file);
+    }
 
     this.disabled = true;
-    previewWrap.style.display = 'none';
+    this.classList.add('is-busy');
+    const originalLabel = this.textContent;
+    this.textContent = 'Converting…';
     showAdminMsg(msg, 'Tracing… this can take a few seconds.', false);
+
     try {
-        const res = await fetch(BACKEND_URL + '/convert-logo', {
+        const res = await fetch(BACKEND_URL + (colour ? '/api/convert/svg' : '/convert-logo'), {
             method: 'POST',
             headers: adminAuthHeaders(),
             body: formData,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Conversion failed.');
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok) throw new Error(data.error || 'Conversion failed (' + res.status + ').');
 
         convertedSVG = data.svg;
-        convertedEPS = data.eps;
-        document.getElementById('convertPreview').innerHTML = data.svg;
+        convertedEPS = data.eps || null;
+
+        const originalTarget = document.getElementById('convertOriginal');
+        originalTarget.innerHTML = '';
+        const originalImg = document.createElement('img');
+        originalImg.src = originalObjectUrl;
+        originalImg.alt = 'Original upload';
+        originalTarget.appendChild(originalImg);
+
+        renderVectorPreview(data.svg);
+
+        const meta = data.meta;
+        document.getElementById('convertMeta').textContent = meta
+            ? meta.size.width + '×' + meta.size.height + ' · traced in ' + meta.ms + ' ms · '
+              + (data.svg.length / 1024).toFixed(0) + ' KB SVG'
+              + (meta.backgroundRemoved ? ' · background removed' : '')
+            : (data.svg.length / 1024).toFixed(0) + ' KB SVG';
+
         previewWrap.style.display = 'block';
-        showAdminMsg(msg, 'Traced successfully — download below, or open the SVG/EPS directly in CorelDRAW.', false);
+        syncModeUi();
+
+// Take the upload ceiling from the server rather than trusting a copy of the
+// number here, so raising MAX_UPLOAD_MB in Railway doesn't leave the client
+// rejecting files the backend would have accepted.
+fetch(BACKEND_URL + '/api/convert/health')
+    .then(function (res) { return res.ok ? res.json() : null; })
+    .then(function (health) {
+        if (!health || !health.limits || !health.limits.maxUploadMb) return;
+        MAX_UPLOAD_MB = health.limits.maxUploadMb;
+        const label = document.getElementById('maxUploadLabel');
+        if (label) label.textContent = MAX_UPLOAD_MB;
+    })
+    .catch(function () { /* keep the default; the convert call will surface any real problem */ });
+        showAdminMsg(msg, 'Traced successfully — download below, or import the SVG into CorelDRAW.', false);
     } catch (err) {
-        showAdminMsg(msg, err.message, true);
+        // The upload is deliberately kept, so the user can adjust the settings
+        // and retry without picking the file again.
+        showAdminMsg(msg, err.message + ' Your image is still loaded — adjust the options and try again.', true);
     } finally {
         this.disabled = false;
+        this.classList.remove('is-busy');
+        this.textContent = originalLabel;
     }
 });
 
@@ -399,12 +571,19 @@ function downloadTextFile(text, filename, mime) {
     URL.revokeObjectURL(url);
 }
 
+function downloadBaseName() {
+    if (!selectedLogoFile) return 'logo-traced';
+    return selectedLogoFile.name.replace(/\.[^.]+$/, '') + '-traced';
+}
+
 document.getElementById('downloadConvertedSVG').addEventListener('click', function () {
     if (!convertedSVG) return;
-    downloadTextFile(convertedSVG, 'logo-traced.svg', 'image/svg+xml');
+    downloadTextFile(convertedSVG, downloadBaseName() + '.svg', 'image/svg+xml');
 });
 
 document.getElementById('downloadConvertedEPS').addEventListener('click', function () {
     if (!convertedEPS) return;
-    downloadTextFile(convertedEPS, 'logo-traced.eps', 'application/postscript');
+    downloadTextFile(convertedEPS, downloadBaseName() + '.eps', 'application/postscript');
 });
+
+syncModeUi();

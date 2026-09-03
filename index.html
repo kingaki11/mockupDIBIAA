@@ -309,32 +309,99 @@
         <div id="tabPanel-convert" class="tab-panel" style="display:none;">
         <div id="convertPanel" class="admin-panel">
             <div class="admin-card">
-                <h2>Upload Logo</h2>
+                <h2>Upload Image</h2>
                 <p class="admin-card-hint">
-                    Upload your logo, then convert it below.
+                    JPG, PNG or WEBP, up to <span id="maxUploadLabel">15</span>&nbsp;MB.
                 </p>
-                <label for="logoFile">Logo File (PNG or JPG)</label>
-                <input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp">
+
+                <div id="logoDropzone" class="dropzone" tabindex="0" role="button"
+                     aria-label="Upload an image: drop a file here or press Enter to browse">
+                    <span class="dropzone-icon" aria-hidden="true">&#8682;</span>
+                    <span class="dropzone-text"><strong>Drop an image here</strong> or click to browse</span>
+                    <span class="dropzone-sub">JPG &middot; PNG &middot; WEBP</span>
+                </div>
+                <input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp" hidden>
+
                 <div id="logoFileMsg" class="admin-msg"></div>
             </div>
 
             <div class="admin-card">
-                <h2>Convert Logo to Vector</h2>
+                <h2>Convert to Vector</h2>
                 <p class="admin-card-hint">
-                    Traces the logo into real vector paths (not just an embedded image), in black, with
-                    maximum detail preserved. <strong>In CorelDRAW, import the .svg file</strong> (File →
-                    Import) — it's the reliable one; CorelDRAW's own EPS interpreter is old and can import
-                    hand-made EPS files as blank even when the file is valid. The .eps is included for
-                    Illustrator/other software, or as a backup if SVG import ever gives you trouble. Once
-                    imported, File → Save As → .cdr gives you a true CorelDRAW file — a genuine .cdr can't
-                    be written outside CorelDRAW itself.
+                    Traces the image into real, editable vector paths &mdash; not an embedded bitmap.
+                    <strong>In CorelDRAW, import the .svg</strong> (File &rarr; Import), then File &rarr;
+                    Save As &rarr; .cdr for a true CorelDRAW file. A genuine .cdr can only be written by
+                    CorelDRAW itself.
                 </p>
+
+                <fieldset class="convert-mode">
+                    <legend>Output</legend>
+                    <label class="convert-mode-option">
+                        <input type="radio" name="convertMode" value="color" checked>
+                        <span><strong>Full colour</strong><em>Keeps the original colours. Best for general artwork.</em></span>
+                    </label>
+                    <label class="convert-mode-option">
+                        <input type="radio" name="convertMode" value="black">
+                        <span><strong>Black silhouette</strong><em>Solid black, plus an EPS. For printing on boxes.</em></span>
+                    </label>
+                </fieldset>
+
+                <details class="convert-advanced">
+                    <summary>Advanced options</summary>
+                    <p class="convert-advanced-hint">
+                        The defaults suit most logos &mdash; you only need these if the result needs tuning.
+                    </p>
+
+                    <label class="convert-toggle">
+                        <input type="checkbox" id="optRemoveBg" checked>
+                        <span>Remove the background <em>(turn off for photos, where the background is part of the picture)</em></span>
+                    </label>
+
+                    <div class="convert-slider" data-colour-only>
+                        <label for="optColorPrecision">Colour precision <output id="outColorPrecision">6</output></label>
+                        <input type="range" id="optColorPrecision" min="1" max="8" step="1" value="6">
+                        <span class="convert-slider-hint">More colours retained, larger file.</span>
+                    </div>
+
+                    <div class="convert-slider">
+                        <label for="optFilterSpeckle">Detail / speckle filter <output id="outFilterSpeckle">4</output></label>
+                        <input type="range" id="optFilterSpeckle" min="0" max="32" step="1" value="4">
+                        <span class="convert-slider-hint">Higher discards more small specks.</span>
+                    </div>
+
+                    <div class="convert-slider" data-colour-only>
+                        <label for="optCornerThreshold">Corner smoothness <output id="outCornerThreshold">60</output></label>
+                        <input type="range" id="optCornerThreshold" min="0" max="180" step="5" value="60">
+                        <span class="convert-slider-hint">Higher rounds off more corners.</span>
+                    </div>
+
+                    <div class="convert-slider" data-colour-only>
+                        <span class="convert-slider-label">Output mode</span>
+                        <div class="convert-segmented">
+                            <label><input type="radio" name="optMode" value="spline" checked><span>Spline</span></label>
+                            <label><input type="radio" name="optMode" value="polygon"><span>Polygon</span></label>
+                        </div>
+                        <span class="convert-slider-hint">Splines give smooth curves; polygons give straight edges.</span>
+                    </div>
+
+                    <button type="button" id="resetAdvanced" class="convert-reset">Reset to defaults</button>
+                </details>
 
                 <button type="button" id="convertBtn" class="admin-btn-primary">Convert to Vector</button>
                 <div id="convertMsg" class="admin-msg"></div>
 
                 <div id="convertPreviewWrap" class="convert-preview-wrap" style="display:none;">
-                    <div id="convertPreview" class="convert-preview"></div>
+                    <div class="convert-compare">
+                        <figure class="convert-figure">
+                            <figcaption>Original</figcaption>
+                            <div id="convertOriginal" class="convert-preview"></div>
+                        </figure>
+                        <figure class="convert-figure">
+                            <figcaption>Vector result</figcaption>
+                            <div id="convertPreview" class="convert-preview"></div>
+                        </figure>
+                    </div>
+                    <div id="convertMeta" class="convert-meta"></div>
                     <div class="convert-download-row">
                         <button type="button" id="downloadConvertedSVG" class="download-button">Download SVG</button>
                         <button type="button" id="downloadConvertedEPS" class="download-button">Download EPS</button>
