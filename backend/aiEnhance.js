@@ -20,8 +20,19 @@ const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 // call against $0.067 for a redraw, so verifying is close to free.
 const VERIFY_MODEL = 'gpt-4o-mini';
 
-const DEFAULT_MODEL = 'gpt-image-1';
-const DEFAULT_QUALITY = 'medium';   // low | medium | high — medium is the cost/quality middle
+// gpt-image-2, not gpt-image-1, and this is the single biggest quality change in
+// the whole redraw path. gpt-image-1 reinvented artwork: it returned "dbiaa" for
+// "dibiaa", swapped a box mark for a chevron, and mangled Gujarati beyond use
+// (રાણીંગા -> રાશીંગા, જવેલર્સ -> જ્બેલર્સ). gpt-image-2 reproduced all of the same
+// logos exactly — every Gujarati glyph correct across three separate runs, the
+// dibiaa wordmark intact with its box mark, Bling keeping its sparkles and rule.
+//
+// Quality low, not medium, for the same reason the model changed: measurement.
+// Low was indistinguishable from medium on every logo tried, at roughly a
+// quarter of the price — $0.014 to $0.021 a conversion against $0.045 to $0.067
+// on gpt-image-1 medium. Better and cheaper, so there is nothing to trade off.
+const DEFAULT_MODEL = 'gpt-image-2';
+const DEFAULT_QUALITY = 'low';   // low | medium | high
 
 // Published per-million-token rates for gpt-image-1, used only to show an
 // estimated cost alongside the (factual) token counts the API returns.

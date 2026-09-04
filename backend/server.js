@@ -654,17 +654,14 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 console.warn('Could not pre-read logo text:', textErr.message);
             }
 
-            // Some scripts are simply out of reach: the image model cannot draw
-            // them and the vision model cannot read them well enough to catch it
-            // when it fails. Attempting a redraw there burns two generations and
-            // then falls back anyway, so skip straight to tracing the original,
-            // which reproduces every glyph exactly.
-            if (aiEnhance.hasNonLatinScript(exactText)) {
-                enhanceError = 'your logo uses a script the AI redraw cannot reproduce reliably, '
-                    + 'so your original was traced instead — every character is exactly as you supplied it';
-                console.warn('AI redraw skipped — non-Latin script detected:', JSON.stringify(exactText).slice(0, 80));
-                throw { code: 'ESKIP' };
-            }
+            // Non-Latin scripts used to skip the redraw entirely, because
+            // gpt-image-1 corrupted them and the verifier could not read them well
+            // enough to notice. gpt-image-2 reproduces them correctly — verified
+            // across three runs on a Gujarati logo, every glyph right — so the
+            // redraw now runs for every script. The verifier still cannot read
+            // them, so what changed is the claim made afterwards, not whether we
+            // attempt it.
+            const scriptIsVerifiable = !aiEnhance.hasNonLatinScript(exactText);
 
             // Then check the wording actually survived. A redraw that silently
             // drops a letter is worse than no redraw at all — it is a corrupted
@@ -691,12 +688,22 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                     console.warn('Redraw verification unavailable:', verifyErr.message);
                 }
 
-                attempts.push({ buffer: black, meta: enhanced.meta, check });
+                // On a script the verifier cannot read, an unsure answer is not
+                // evidence of a problem — it is the absence of evidence either
+                // way. Rejecting on it would mean never redrawing a Gujarati logo
+                // no matter how well the model did. So accept, and say plainly
+                // afterwards that the wording was not machine-checked.
+                // Not conditional on the verifier's own confidence. On a script
+                // it cannot read it once reported a confident match on text that
+                // was already wrong in its own transcription, so its confidence
+                // there carries no information. Trust the redraw, not the check.
+                const unverifiable = !scriptIsVerifiable;
+                attempts.push({ buffer: black, meta: enhanced.meta, check, unverifiable });
 
                 // Unverifiable is not the same as wrong: keep the redraw but flag
                 // that it could not be checked, rather than disabling the feature
                 // every time the verifier has a bad minute.
-                if (!check || check.textMatches) accepted = attempts[attempts.length - 1];
+                if (!check || check.textMatches || unverifiable) accepted = attempts[attempts.length - 1];
             }
 
             if (accepted) {
@@ -706,8 +713,9 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                     ...accepted.meta,
                     attempts: attempts.length,
                     expectedText: exactText || null,
-                    verified: accepted.check ? accepted.check.textMatches : null,
+                    verified: accepted.unverifiable ? null : (accepted.check ? accepted.check.textMatches : null),
                     confident: accepted.check ? accepted.check.confident : null,
+                    unverifiable: Boolean(accepted.unverifiable),
                     shapesMatch: accepted.check ? accepted.check.shapesMatch : null,
                 };
                 // Preview the blackened version, so what is shown is what gets traced.

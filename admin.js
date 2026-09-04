@@ -500,6 +500,12 @@ document.getElementById('convertBtn').addEventListener('click', async function (
             // changes its shape, so this is a prompt to look rather than a fault.
             showAdminMsg(msg, 'Done, and the wording was checked against your original. '
                 + 'The logo mark came out differently though — compare the panes above before you download.', true);
+        } else if (ai && ai.unverifiable) {
+            // The redraw itself is reliable on these scripts; it is the automatic
+            // reader that is not. Say which, so "not checked" is not mistaken for
+            // "probably wrong".
+            showAdminMsg(msg, 'Done — the wording could not be machine-checked for this script, '
+                + 'so please compare the panes above before you download.', true);
         } else if (ai && ai.verified === null) {
             showAdminMsg(msg, 'Done — but the wording could not be auto-checked this time, so compare the panes above before you download.', true);
         } else {
