@@ -796,8 +796,12 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
             if (masked.stats.usable && masked.mask) applyMaskAsAlpha(cut, masked.mask);
             else floodFillBackgroundAlpha(cut);
 
-            monochrome = isEffectivelyMonochrome(cut);
+            // Blacken before testing, not after. Asking for the AI pass means the
+            // output will be single-colour whatever happens, so testing the
+            // original's colours sent a blackened metallic logo to VTracer — 30
+            // stacked paths and 107KB for what potrace fits in one.
             if (wantsEnhance) blackenVisible(cut);
+            monochrome = isEffectivelyMonochrome(cut);
             raster = await cut.getBufferAsync(Jimp.MIME_PNG);
 
             // Trace the raw distance field, not the mask built from it. The mask

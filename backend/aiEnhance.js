@@ -178,12 +178,25 @@ async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
             imagePart(redrawBuf, 'image/png'),
         ],
     }], timeoutMs);
+    // The model sometimes answers text_matches:false while quoting two identical
+    // strings — a real conversion was rejected for "producing MAN instead of
+    // MAN". Its own transcriptions are the evidence and its boolean is only a
+    // judgement about them, so when the two readings agree, that settles it.
+    // Compared case- and whitespace-insensitively because the verifier is
+    // inconsistent about both; letters are compared exactly, so a dropped
+    // character is still caught.
+    const normalise = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const t1 = normalise(data.text1);
+    const t2 = normalise(data.text2);
+    const transcriptsAgree = t1.length > 0 && t1 === t2;
+
     return {
         text1: data.text1 || '',
         text2: data.text2 || '',
         // Unreadable script is treated as a failed check, not a pass. The Gujarati
         // case passed precisely because an unsure verifier defaulted to yes.
-        textMatches: data.text_matches !== false && data.confident !== false,
+        textMatches: transcriptsAgree || (data.text_matches !== false && data.confident !== false),
+        transcriptsAgree,
         shapesMatch: data.shapes_match !== false,
         confident: data.confident !== false,
     };
