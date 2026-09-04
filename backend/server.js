@@ -14,7 +14,7 @@ const potrace = require('potrace');
 const Jimp = require('jimp');
 const catalogStore = require('./catalog');
 const { potraceSvgToEps } = require('./svgToEps');
-const { buildTraceMask } = require('./traceMask');
+const { buildTraceMask, grayscaleForTrace, grayscaleFromAlpha } = require('./traceMask');
 const {
     DEFAULTS: VECTORIZE_DEFAULTS,
     DEFAULT_MAX_EDGE,
@@ -386,6 +386,20 @@ async function forceBlack(buffer) {
     return image.getBufferAsync(Jimp.MIME_PNG);
 }
 
+// Recolours every visible pixel black, leaving alpha alone. Asking for the AI
+// pass is a request for black print-ready artwork, and that has to hold even when
+// the redraw was rejected or skipped — blackening the traced original keeps the
+// promise without reintroducing the risk, since nothing is reinterpreted, only
+// recoloured.
+function blackenVisible(image) {
+    const { data } = image.bitmap;
+    for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] === 0) continue;
+        data[i] = 0; data[i + 1] = 0; data[i + 2] = 0;
+    }
+    return image;
+}
+
 // True when the image already carries a real alpha channel — an AI redraw always
 // does. Such an image needs no background detection at all: transparency IS the
 // answer, and running colour-distance masking over it can only damage it.
@@ -720,46 +734,62 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
     }
 
     let raster;          // PNG with alpha, for VTracer
-    let flattened;       // PNG on white, for potrace
+    let flattened;       // continuous greyscale, for potrace
     let sourceSize;
     let monochrome = false;
     let maskedBackground = false;
     try {
-        let image = await Jimp.read(sourceBuffer);
+        const image = await Jimp.read(sourceBuffer);
+        const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
+        if (longEdge > VTRACER_MAX_EDGE) {
+            image.scale(VTRACER_MAX_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
+        }
+        sourceSize = { width: image.bitmap.width, height: image.bitmap.height };
 
-        // Only infer the background when there is no alpha to read. An AI redraw
-        // arrives already cut out, and putting it through colour-distance masking
-        // was the cause of the patches: on one 1536x1024 redraw the mask filled 90
-        // enclosed holes — letter counters — and deleted 297 small components,
-        // sparkle tips and the like, before anything was even traced.
-        if (wantsCutout && !hasUsableAlpha(image)) {
-            raster = await cutoutToPng(sourceBuffer, VTRACER_MAX_EDGE);
-            image = await Jimp.read(raster);
+        let gray = null;
+
+        if (hasUsableAlpha(image)) {
+            // Already cut out — an AI redraw always is. Alpha is the coverage
+            // ramp, so read it directly; inferring a background here could only
+            // damage what is already exact.
+            const cut = image.clone();
+            if (wantsEnhance) blackenVisible(cut);
+            raster = await cut.getBufferAsync(Jimp.MIME_PNG);
+            monochrome = isEffectivelyMonochrome(cut);
+            gray = grayscaleFromAlpha(cut);
+        } else if (wantsCutout) {
+            const masked = buildTraceMask(image);
+            const cut = image.clone();
+            if (masked.stats.usable && masked.mask) applyMaskAsAlpha(cut, masked.mask);
+            else floodFillBackgroundAlpha(cut);
+
+            monochrome = isEffectivelyMonochrome(cut);
+            if (wantsEnhance) blackenVisible(cut);
+            raster = await cut.getBufferAsync(Jimp.MIME_PNG);
+
+            // Trace the raw distance field, not the mask built from it. The mask
+            // is binary, and by this point has had small components deleted and
+            // enclosed holes filled — on one Gujarati logo, 305 removed and 24
+            // filled, which is what notched the monogram circle and doubled a
+            // digit. The distance field is untouched by either, and being
+            // continuous it lets potrace place each edge between pixels rather
+            // than tracing a staircase.
+            gray = (masked.distances && masked.stats.threshold)
+                ? grayscaleForTrace(image, masked.distances, masked.stats.threshold)
+                : grayscaleFromAlpha(cut);
             maskedBackground = true;
         } else {
-            const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
-            if (longEdge > VTRACER_MAX_EDGE) {
-                image.scale(VTRACER_MAX_EDGE / longEdge, Jimp.RESIZE_BICUBIC);
-            }
-            raster = await image.getBufferAsync(Jimp.MIME_PNG);
+            const cut = image.clone();
+            if (wantsEnhance) blackenVisible(cut);
+            raster = await cut.getBufferAsync(Jimp.MIME_PNG);
+            monochrome = isEffectivelyMonochrome(cut);
         }
 
-        // Asking for the AI pass is a request for black print-ready artwork, and
-        // that has to hold even when the redraw was rejected for changing the
-        // wording. Blackening the traced original keeps the promise without
-        // reintroducing the risk — nothing has been reinterpreted, only recoloured.
-        if (wantsEnhance) {
-            const { data } = image.bitmap;
-            for (let i = 0; i < data.length; i += 4) {
-                if (data[i + 3] === 0) continue;
-                data[i] = 0; data[i + 1] = 0; data[i + 2] = 0;
-            }
-            raster = await image.getBufferAsync(Jimp.MIME_PNG);
+        if (monochrome) {
+            flattened = gray
+                ? await gray.getBufferAsync(Jimp.MIME_PNG)
+                : await flattenOntoWhite(image);
         }
-
-        sourceSize = { width: image.bitmap.width, height: image.bitmap.height };
-        monochrome = isEffectivelyMonochrome(image);
-        if (monochrome) flattened = await flattenOntoWhite(image);
     } catch (readErr) {
         console.warn('Rejected unreadable upload:', readErr.message);
         return res.status(400).json({ error: 'Could not read that image file.', detail: readErr.message });

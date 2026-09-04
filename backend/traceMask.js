@@ -534,7 +534,63 @@ function buildTraceMask(image) {
         outData[i] = v; outData[i + 1] = v; outData[i + 2] = v; outData[i + 3] = 255;
     }
 
-    return { image: out, mask, stats: { threshold, filled, removed, fgRatio, bg, backgrounds, usable: true } };
+    return {
+        image: out,
+        mask,
+        distances,
+        stats: { threshold, filled, removed, fgRatio, bg, backgrounds, usable: true },
+    };
 }
 
-module.exports = { buildTraceMask, buildGuidedMask, smoothMask };
+// Turns the artwork/background decision into a CONTINUOUS greyscale rather than a
+// binary mask, for potrace to threshold itself.
+//
+// This matters more than it sounds. A binary mask throws away every sub-pixel
+// edge: potrace then traces a hard staircase and can only round it off, which is
+// what notched the circle on a traced monogram. Feeding a ramp instead lets
+// potrace place each edge between pixels, the way it does on a normal scan.
+//
+// The ramp spans background to the mask threshold, which puts potrace's own 128
+// decision at half that threshold:
+//   distance 0              -> 255  (certain background, white)
+//   distance = threshold/2  -> 128  (potrace's decision point)
+//   distance >= threshold   -> 0    (certain artwork, black)
+//
+// Deliberately more inclusive than the mask's own boundary. That boundary comes
+// from EDGE_MIDPOINT_FRACTION, which was tuned to keep hairlines from fattening
+// and consequently runs a little thin; sitting potrace below it puts stroke
+// weight back on the mark. Swept 0.8x to 2.6x over two logos: at 1x the ink ratio
+// lands at 0.984 and 0.999 against the source, versus 0.931 and 0.960 at 2x, with
+// IoU best or tied at 1x on both.
+const GRAY_RAMP_SPAN = 1;
+
+function grayscaleForTrace(image, distances, threshold) {
+    const { width: w, height: h } = image.bitmap;
+    const total = w * h;
+    const out = new Jimp(w, h, 0xffffffff);
+    const d = out.bitmap.data;
+    const span = Math.max(1, threshold * GRAY_RAMP_SPAN);
+    for (let p = 0; p < total; p++) {
+        const v = Math.max(0, Math.min(255, Math.round(255 * (1 - distances[p] / span))));
+        const i = p * 4;
+        d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+    }
+    return out;
+}
+
+// Same idea for an image that already carries alpha: alpha IS the coverage ramp,
+// so invert it straight into greyscale and keep every anti-aliased edge.
+function grayscaleFromAlpha(image) {
+    const { width: w, height: h, data } = image.bitmap;
+    const total = w * h;
+    const out = new Jimp(w, h, 0xffffffff);
+    const d = out.bitmap.data;
+    for (let p = 0; p < total; p++) {
+        const v = 255 - data[p * 4 + 3];
+        const i = p * 4;
+        d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+    }
+    return out;
+}
+
+module.exports = { buildTraceMask, buildGuidedMask, smoothMask, grayscaleForTrace, grayscaleFromAlpha };
