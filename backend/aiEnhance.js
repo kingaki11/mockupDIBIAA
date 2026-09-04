@@ -190,6 +190,14 @@ async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
     const t2 = normalise(data.text2);
     const transcriptsAgree = t1.length > 0 && t1 === t2;
 
+    // A dropped accent is a different kind of miss from a dropped letter. The
+    // model rendered MUSKĀN as MUSKAN — the word is intact, the macron is not.
+    // Worth separating, because falling all the way back to tracing over one
+    // diacritic loses the redraw entirely.
+    const stripMarks = (t) => t.normalize('NFD').replace(/\p{M}/gu, '');
+    const bare1 = stripMarks(t1);
+    const differsOnlyByDiacritics = !transcriptsAgree && bare1.length > 0 && bare1 === stripMarks(t2);
+
     return {
         text1: data.text1 || '',
         text2: data.text2 || '',
@@ -197,6 +205,7 @@ async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
         // case passed precisely because an unsure verifier defaulted to yes.
         textMatches: transcriptsAgree || (data.text_matches !== false && data.confident !== false),
         transcriptsAgree,
+        differsOnlyByDiacritics,
         shapesMatch: data.shapes_match !== false,
         confident: data.confident !== false,
     };

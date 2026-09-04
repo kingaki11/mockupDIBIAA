@@ -14,6 +14,7 @@ const potrace = require('potrace');
 const Jimp = require('jimp');
 const catalogStore = require('./catalog');
 const { potraceSvgToEps } = require('./svgToEps');
+const { splitCompoundPaths } = require('./splitPaths');
 const { buildTraceMask, grayscaleForTrace, grayscaleFromAlpha } = require('./traceMask');
 const {
     DEFAULTS: VECTORIZE_DEFAULTS,
@@ -737,6 +738,26 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 };
                 // Preview the blackened version, so what is shown is what gets traced.
                 enhancedDataUrl = 'data:image/png;base64,' + sourceBuffer.toString('base64');
+            } else if (attempts.some((a) => a.check && a.check.differsOnlyByDiacritics)) {
+                // Last resort before giving up on the redraw: the word is right and
+                // only an accent is missing. Losing the whole redraw over one
+                // macron is a worse outcome than keeping it and saying so, since
+                // the user is looking at both panes anyway.
+                const near = attempts.find((a) => a.check && a.check.differsOnlyByDiacritics);
+                sourceBuffer = near.buffer;
+                sourceMime = 'image/png';
+                enhanceMeta = {
+                    ...near.meta,
+                    attempts: attempts.length,
+                    expectedText: exactText || null,
+                    verified: false,
+                    diacriticsDropped: true,
+                    shapesMatch: near.check ? near.check.shapesMatch : null,
+                };
+                enhancedDataUrl = 'data:image/png;base64,' + sourceBuffer.toString('base64');
+                enhanceError = 'the AI dropped an accent (it wrote "' + near.check.text2
+                    + '" for "' + near.check.text1 + '") — everything else matches, so check that word before you download';
+                console.warn('AI redraw kept with diacritic loss:', near.check.text1, '->', near.check.text2);
             } else if (attempts.length === 0) {
                 // Every generation failed outright, so there is no redraw to
                 // report on — only why we never got one.
@@ -852,10 +873,23 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 }, (err, out) => (err ? reject(err) : resolve(out)));
             });
             ms = Date.now() - started;
+            // EPS first: svgToEps reads potrace's single compound path, so it has
+            // to see the SVG before that path is broken up.
             try {
                 eps = potraceSvgToEps(svg);
             } catch (epsErr) {
                 console.warn('EPS conversion skipped:', epsErr.message);
+            }
+
+            // Then split the compound path into one object per shape. potrace
+            // packs the whole logo into a single <path>, which CorelDRAW imports
+            // as one curve with nothing to ungroup and no way to select a piece of
+            // it. Splitting is purely structural — holes stay with their shapes,
+            // and the rendered result is identical.
+            try {
+                svg = splitCompoundPaths(svg);
+            } catch (splitErr) {
+                console.warn('Path split skipped:', splitErr.message);
             }
         } else {
             engine = 'vtracer';
