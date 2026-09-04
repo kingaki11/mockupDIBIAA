@@ -671,14 +671,31 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
             // reinterprets it.
             const attempts = [];
             let accepted = null;
-            for (let attempt = 1; attempt <= 2 && !accepted; attempt++) {
-                const enhanced = await aiEnhance.enhanceImage(
-                    originalBuffer,
-                    originalMime,
-                    { width: probe.bitmap.width, height: probe.bitmap.height },
-                    OPENAI_TIMEOUT_MS,
-                    exactText,
-                );
+            let lastError = null;
+            // Three, not two, and a failed generation now costs an attempt rather
+            // than the whole conversion. OpenAI's safety filter rejects perfectly
+            // ordinary logos intermittently — one in three on a jewellery mark in
+            // testing — and previously that exception escaped the loop, so a
+            // transient refusal silently downgraded the result to a plain trace
+            // and looked like the redraw had stopped working.
+            for (let attempt = 1; attempt <= 3 && !accepted; attempt++) {
+                let enhanced;
+                try {
+                    enhanced = await aiEnhance.enhanceImage(
+                        originalBuffer,
+                        originalMime,
+                        { width: probe.bitmap.width, height: probe.bitmap.height },
+                        OPENAI_TIMEOUT_MS,
+                        exactText,
+                    );
+                } catch (genErr) {
+                    // A missing or rejected key will fail identically every time,
+                    // so give up immediately rather than burning three calls.
+                    if (genErr.code === 'ENOKEY' || genErr.code === 'EBADKEY') throw genErr;
+                    lastError = genErr;
+                    console.warn(`Redraw attempt ${attempt} failed:`, genErr.message);
+                    continue;
+                }
                 const black = await forceBlack(enhanced.buffer);
 
                 let check = null;
@@ -720,6 +737,14 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 };
                 // Preview the blackened version, so what is shown is what gets traced.
                 enhancedDataUrl = 'data:image/png;base64,' + sourceBuffer.toString('base64');
+            } else if (attempts.length === 0) {
+                // Every generation failed outright, so there is no redraw to
+                // report on — only why we never got one.
+                const msg = (lastError && lastError.message) || 'unknown error';
+                enhanceError = /safety system/i.test(msg)
+                    ? 'the AI image service refused this image on every attempt, so your original was traced instead'
+                    : 'the AI clean-up failed (' + msg.slice(0, 120) + '), so your original was traced instead';
+                console.warn('AI redraw produced nothing after 3 attempts —', msg);
             } else {
                 const last = attempts[attempts.length - 1].check;
                 enhanceError = 'the AI changed the wording (it produced "' + last.text2
