@@ -90,7 +90,7 @@ document.getElementById('siteLogoutLink').addEventListener('click', function () 
 // All three sit in the same logged-in area — switching tabs is pure visibility
 // toggling, no separate password step for any of them.
 
-const TAB_IDS = ['mockup', 'fields', 'convert'];
+const TAB_IDS = ['mockup', 'fields', 'convert', 'boxmockup'];
 
 function switchTab(tab) {
     TAB_IDS.forEach(function (id) {
@@ -109,6 +109,9 @@ function switchTab(tab) {
         btn.classList.toggle('active', btn.dataset.tab === tab);
     });
     if (tab === 'fields') loadAdminCatalog();
+    // Templates are fetched on open rather than at load, so one uploaded in
+    // another session shows up without a page refresh.
+    if (tab === 'boxmockup' && typeof bmLoadTemplates === 'function') bmLoadTemplates();
 }
 
 document.querySelectorAll('.app-tab').forEach(function (btn) {

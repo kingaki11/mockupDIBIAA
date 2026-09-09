@@ -939,6 +939,136 @@ app.use((err, req, res, next) => {
     next();
 });
 
+// ── Mockup tab: die-line templates ───────────────────────────────────────────
+// A template is plain line art on white, captioned with its own style, box type
+// and size. One template serves every box colour: the white is repainted in the
+// browser at render time, so there is no combinatorial explosion of stored
+// images the way there is for the photographic combos above.
+
+function templateId(style, type, size) {
+    return [slugify(style), slugify(type), slugify(size)].filter(Boolean).join('-') || 'template';
+}
+
+app.get('/box-templates', (req, res) => {
+    const catalog = catalogStore.readCatalog();
+    res.json({ templates: catalog.boxTemplates || [] });
+});
+
+app.get('/box-template-image/:id', (req, res) => {
+    const catalog = catalogStore.readCatalog();
+    const tpl = (catalog.boxTemplates || []).find((t) => t.id === req.params.id);
+    if (!tpl) return res.status(404).json({ error: 'Template not found.' });
+    const filePath = catalogStore.templateImagePath(tpl.id, tpl.ext);
+    if (!filePath.startsWith(catalogStore.TEMPLATES_DIR) || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Template image not found.' });
+    }
+    res.sendFile(filePath);
+});
+
+app.post('/admin/box-template', requireAdmin, upload.single('template'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded. Send it as multipart/form-data field "template".' });
+    }
+    if (!ACCEPTED_IMAGE_TYPES.has(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Only PNG, JPG or WEBP files are accepted.' });
+    }
+
+    let styleLabel = String(req.body.styleLabel || '').trim();
+    let typeLabel = String(req.body.typeLabel || '').trim();
+    let sizeLabel = String(req.body.sizeLabel || '').trim();
+
+    // Read whatever the form left blank off the caption in the artwork itself.
+    // Best-effort: a template with the fields filled in by hand must still save
+    // if the AI is unconfigured or unreachable.
+    let readError = null;
+    if (!styleLabel || !sizeLabel) {
+        try {
+            const info = await aiEnhance.readBoxTemplateInfo(req.file.buffer, req.file.mimetype, OPENAI_TIMEOUT_MS);
+            if (!styleLabel) styleLabel = info.style;
+            if (!typeLabel) typeLabel = info.type;
+            if (!sizeLabel) sizeLabel = info.size;
+        } catch (err) {
+            readError = err.message;
+            console.warn('Could not read die-line caption:', err.message);
+        }
+    }
+
+    if (!styleLabel && !typeLabel) {
+        return res.status(400).json({
+            error: 'Could not work out the box style or type. Fill them in and try again.',
+            detail: readError,
+        });
+    }
+
+    const ext = req.file.mimetype === 'image/jpeg' ? 'jpg' : (req.file.mimetype === 'image/webp' ? 'webp' : 'png');
+    const id = templateId(styleLabel, typeLabel, sizeLabel);
+    const dims = aiEnhance.parseBoxSize(sizeLabel);
+
+    try {
+        // Record the artwork's own pixel size. Placing a logo at a real-world
+        // size later needs pixels-per-inch, which needs both halves of that ratio.
+        let pixelWidth = null;
+        let pixelHeight = null;
+        try {
+            const probe = await Jimp.read(req.file.buffer);
+            pixelWidth = probe.bitmap.width;
+            pixelHeight = probe.bitmap.height;
+        } catch (probeErr) {
+            return res.status(400).json({ error: 'Could not read that image file.', detail: probeErr.message });
+        }
+
+        fs.mkdirSync(catalogStore.TEMPLATES_DIR, { recursive: true });
+        // Remove any previous file for this id whose extension differs, or the
+        // old one would linger and be served instead.
+        for (const old of ['png', 'jpg', 'webp']) {
+            const p = catalogStore.templateImagePath(id, old);
+            if (old !== ext && fs.existsSync(p)) fs.unlinkSync(p);
+        }
+        fs.writeFileSync(catalogStore.templateImagePath(id, ext), req.file.buffer);
+
+        const catalog = catalogStore.readCatalog();
+        catalog.boxTemplates = catalog.boxTemplates || [];
+        const entry = {
+            id,
+            styleLabel,
+            typeLabel,
+            sizeLabel,
+            length: dims ? dims.length : null,
+            width: dims ? dims.width : null,
+            height: dims ? dims.height : null,
+            pixelWidth,
+            pixelHeight,
+            ext,
+        };
+        const idx = catalog.boxTemplates.findIndex((t) => t.id === id);
+        if (idx >= 0) catalog.boxTemplates[idx] = { ...catalog.boxTemplates[idx], ...entry };
+        else catalog.boxTemplates.push(entry);
+        catalogStore.writeCatalog(catalog);
+
+        res.json({ template: entry, templates: catalog.boxTemplates, readError });
+    } catch (err) {
+        console.error('Failed to save box template:', err);
+        res.status(500).json({ error: 'Failed to save the template.', detail: err.message });
+    }
+});
+
+app.delete('/admin/box-template/:id', requireAdmin, (req, res) => {
+    const catalog = catalogStore.readCatalog();
+    catalog.boxTemplates = catalog.boxTemplates || [];
+    const tpl = catalog.boxTemplates.find((t) => t.id === req.params.id);
+    if (!tpl) return res.status(404).json({ error: 'Template not found.' });
+    try {
+        const filePath = catalogStore.templateImagePath(tpl.id, tpl.ext);
+        if (filePath.startsWith(catalogStore.TEMPLATES_DIR) && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        catalog.boxTemplates = catalog.boxTemplates.filter((t) => t.id !== req.params.id);
+        catalogStore.writeCatalog(catalog);
+        res.json({ templates: catalog.boxTemplates });
+    } catch (err) {
+        console.error('Failed to delete box template:', err);
+        res.status(500).json({ error: 'Failed to delete the template.', detail: err.message });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`mockupdibiaa-backend listening on port ${PORT}`);

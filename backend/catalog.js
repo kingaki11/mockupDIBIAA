@@ -8,6 +8,10 @@ const path = require('path');
 
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'data');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
+// Die-line templates for the Mockup tab. Kept apart from IMAGES_DIR because
+// those are per-combo photographs, while these are plain line art recoloured at
+// render time and shared across every box colour.
+const TEMPLATES_DIR = path.join(DATA_DIR, 'templates');
 const CATALOG_FILE = path.join(DATA_DIR, 'catalog.json');
 
 const EMPTY_CATALOG = {
@@ -21,11 +25,15 @@ const EMPTY_CATALOG = {
     // part of the frame — canvas-center isn't the same as "on the box lid".
     // { mockup: {x, y}, die: {x, y} } as fractions (0-1) of each canvas's width/height.
     logoPositions: {},
+    // Mockup tab: uploaded die-line artwork.
+    // { id, type, style, typeLabel, styleLabel, sizeLabel, length, width, height, ext }
+    boxTemplates: [],
 };
 
 function ensureDataDir() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.mkdirSync(IMAGES_DIR, { recursive: true });
+    fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
 }
 
 function readCatalog() {
@@ -56,9 +64,15 @@ function comboImagePath(type, style, color, kind) {
     return path.join(comboDir(type, style, color), `${kind}.png`);
 }
 
+function templateImagePath(id, ext) {
+    return path.join(TEMPLATES_DIR, `${id}.${ext || 'png'}`);
+}
+
 module.exports = {
     DATA_DIR,
     IMAGES_DIR,
+    TEMPLATES_DIR,
+    templateImagePath,
     readCatalog,
     writeCatalog,
     comboDir,

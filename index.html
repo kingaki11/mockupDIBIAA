@@ -30,6 +30,7 @@
                 <button type="button" class="app-tab active" data-tab="mockup">📦 Create Mockup</button>
                 <button type="button" class="app-tab" data-tab="fields">➕ Add Fields</button>
                 <button type="button" class="app-tab" data-tab="convert">🔄 Convert Logo</button>
+                <button type="button" class="app-tab" data-tab="boxmockup">🎁 Mockup</button>
             </div>
             <span id="siteLogoutLink" class="app-logout-link">Log out</span>
         </div>
@@ -374,10 +375,101 @@
         </div>
     </div>
 
+        <!-- ── Mockup: recolour a die-line template and place a logo on it ── -->
+        <div id="tabPanel-boxmockup" class="tab-panel" style="display:none;">
+        <div id="boxMockupPanel" class="admin-panel">
+            <div class="admin-card">
+                <h2>Box</h2>
+                <p class="admin-card-hint">
+                    Pick a die-line, then its colour. The template is plain line art on white &mdash; the white is
+                    repainted in your chosen box colour, so one template covers every colour.
+                </p>
+
+                <label for="bmStyle">Box Style</label>
+                <select id="bmStyle"><option value="">--Select--</option></select>
+
+                <label for="bmType">Box Type</label>
+                <select id="bmType"><option value="">--Select--</option></select>
+
+                <label for="bmColor">Box Colour</label>
+                <select id="bmColor"><option value="">--Select--</option></select>
+
+                <label for="bmPrintColor">Printing Colour</label>
+                <select id="bmPrintColor"><option value="">--Select--</option></select>
+
+                <div id="bmBoxMsg" class="admin-msg"></div>
+            </div>
+
+            <div class="admin-card">
+                <h2>Logo</h2>
+                <p class="admin-card-hint">
+                    The background is removed automatically and the logo is placed on the box panel. Give the printed
+                    size in inches &mdash; it is scaled against the box&rsquo;s own dimensions. You can still drag it.
+                </p>
+
+                <div id="bmDropzone" class="dropzone" tabindex="0" role="button"
+                     aria-label="Upload a logo: drop a file here or press Enter to browse">
+                    <span class="dropzone-icon" aria-hidden="true">&#8682;</span>
+                    <span class="dropzone-text"><strong>Drop a logo here</strong> or click to browse</span>
+                    <span class="dropzone-sub">JPG &middot; PNG &middot; WEBP</span>
+                </div>
+                <input type="file" id="bmLogoFile" accept="image/png,image/jpeg,image/webp" hidden>
+
+                <div class="bm-size-row">
+                    <div>
+                        <label for="bmLogoLength">Logo length (in)</label>
+                        <input type="number" id="bmLogoLength" min="0.1" max="24" step="0.05" value="1">
+                    </div>
+                    <div>
+                        <label for="bmLogoBreadth">Logo breadth (in)</label>
+                        <input type="number" id="bmLogoBreadth" min="0.1" max="24" step="0.05" value="0.5">
+                    </div>
+                    <label class="bm-lock">
+                        <input type="checkbox" id="bmKeepRatio" checked>
+                        <span>Keep the logo&rsquo;s own proportions</span>
+                    </label>
+                </div>
+
+                <button type="button" id="bmGenerate" class="admin-btn-primary">Generate Mockup</button>
+                <div id="bmMsg" class="admin-msg"></div>
+
+                <div id="bmResultWrap" style="display:none;">
+                    <div class="bm-canvas-wrap"><canvas id="bmCanvas"></canvas></div>
+                    <div id="bmMeta" class="convert-meta"></div>
+                    <div class="convert-download-row">
+                        <button type="button" id="bmDownload" class="download-button">Download PNG</button>
+                    </div>
+                </div>
+            </div>
+
+            <details class="convert-advanced">
+                <summary>Manage die-line templates</summary>
+                <p class="convert-advanced-hint">
+                    Upload the plain white die-line. The style, box type and size are read from the caption printed
+                    on the artwork, so there is usually nothing to type &mdash; fill a field in only to override it.
+                </p>
+
+                <label for="bmTplFile">Die-line image</label>
+                <input type="file" id="bmTplFile" accept="image/png,image/jpeg,image/webp">
+
+                <div class="bm-size-row">
+                    <div><label for="bmTplStyle">Style (optional)</label><input type="text" id="bmTplStyle" placeholder="TOP-BOTTOM"></div>
+                    <div><label for="bmTplType">Type (optional)</label><input type="text" id="bmTplType" placeholder="RING BOX"></div>
+                    <div><label for="bmTplSize">Size (optional)</label><input type="text" id="bmTplSize" placeholder="2X2X1.5"></div>
+                </div>
+
+                <button type="button" id="bmTplUpload" class="admin-btn-primary">Upload template</button>
+                <div id="bmTplMsg" class="admin-msg"></div>
+                <div id="bmTplList" class="admin-list"></div>
+            </details>
+        </div>
+        </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.5.0/fabric.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.all.min.js"></script>
     <script src="boxscript.js"></script>
     <script src="admin.js"></script>
+    <script src="mockup.js"></script>
 </body>
 
 </html>

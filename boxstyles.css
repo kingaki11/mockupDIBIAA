@@ -1358,6 +1358,50 @@ h2 {
 }
 .admin-btn-delete:active { transform: translateY(0); }
 
+/* ── Mockup tab ── */
+
+#boxMockupPanel {
+    max-width: 1000px;
+}
+
+/* Logo dimensions sit side by side: they are one measurement, not three fields. */
+.bm-size-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    align-items: end;
+    margin-top: 4px;
+}
+
+.bm-size-row label { margin-bottom: 4px; }
+
+.bm-lock {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--muted);
+    cursor: pointer;
+    margin: 0;
+}
+
+.bm-lock input { flex: none; }
+
+.bm-canvas-wrap {
+    margin-top: 18px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: repeating-conic-gradient(#e2e8f0 0% 25%, white 0% 50%) 0 0 / 16px 16px;
+    padding: 12px;
+    overflow: auto;
+}
+
+/* Fabric wraps the canvas in its own container, so both have to shrink or the
+   mockup overflows the card on a narrow screen. */
+.bm-canvas-wrap .canvas-container { max-width: 100%; }
+.bm-canvas-wrap canvas { max-width: 100%; height: auto !important; }
+
 /* ── Admin: tablet/mobile ── */
 @media (max-width: 640px) {
     .admin-row {

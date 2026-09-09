@@ -211,6 +211,44 @@ async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
     };
 }
 
+// Reads the caption printed under a die-line: style, box type and size.
+//
+// Every template carries its own description ("TOP-BOTTOM / RING BOX / BOX SIZE -
+// 2X2X1.5"), so asking a vision model to read it beats making someone retype it
+// for each of dozens of templates. The caller can still override anything it
+// returns — this fills the form in, it does not own the values.
+async function readBoxTemplateInfo(buffer, mimetype, timeoutMs) {
+    const { data } = await chatJson([{
+        role: 'user',
+        content: [
+            { type: 'text', text:
+                'This is a packaging die-line with a caption underneath. Read the caption and reply as JSON: '
+                + '{"style":"<construction style, e.g. TOP-BOTTOM or 100 CUT>",'
+                + '"type":"<box type, e.g. RING BOX, EARRING BOX, HARAM BOX; empty string if the caption names none>",'
+                + '"size":"<the value after BOX SIZE, e.g. 2X2X1.5>"}. '
+                + 'Copy the wording exactly as printed. Use an empty string for anything not shown.' },
+            imagePart(buffer, mimetype),
+        ],
+    }], timeoutMs);
+    return {
+        style: String(data.style || '').trim(),
+        type: String(data.type || '').trim(),
+        size: String(data.size || '').trim(),
+    };
+}
+
+// Splits "2X2X1.5" into inches. Returns null when the caption has no usable size,
+// so the caller can fall back rather than invent a scale.
+function parseBoxSize(sizeLabel) {
+    const parts = String(sizeLabel || '')
+        .split(/[^0-9.]+/)
+        .filter(Boolean)
+        .map(parseFloat)
+        .filter((n) => Number.isFinite(n) && n > 0);
+    if (parts.length < 2) return null;
+    return { length: parts[0], width: parts[1], height: parts[2] || 0 };
+}
+
 // Returns a PNG buffer of the redrawn artwork, plus what it cost.
 async function enhanceImage(buffer, mimetype, { width, height }, timeoutMs, exactText) {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -295,6 +333,8 @@ module.exports = {
     enhanceImage,
     readLogoText,
     verifyRedraw,
+    readBoxTemplateInfo,
+    parseBoxSize,
     hasNonLatinScript,
     isConfigured,
     DEFAULT_MODEL,
