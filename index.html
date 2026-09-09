@@ -373,8 +373,6 @@
             </div>
         </div>
         </div>
-    </div>
-
         <!-- ── Mockup: recolour a die-line template and place a logo on it ── -->
         <div id="tabPanel-boxmockup" class="tab-panel" style="display:none;">
         <div id="boxMockupPanel" class="admin-panel">
@@ -384,6 +382,12 @@
                     Pick a die-line, then its colour. The template is plain line art on white &mdash; the white is
                     repainted in your chosen box colour, so one template covers every colour.
                 </p>
+
+                <div id="bmEmptyState" class="bm-empty" style="display:none;">
+                    <strong>No die-lines uploaded yet.</strong>
+                    <span>Add your plain white die-line images and the style, type and size are read off each one.</span>
+                    <button type="button" id="bmGoUpload" class="admin-btn-primary">Upload die-lines</button>
+                </div>
 
                 <label for="bmStyle">Box Style</label>
                 <select id="bmStyle"><option value="">--Select--</option></select>
@@ -442,15 +446,15 @@
                 </div>
             </div>
 
-            <details class="convert-advanced">
+            <details class="convert-advanced" id="bmTplDetails">
                 <summary>Manage die-line templates</summary>
                 <p class="convert-advanced-hint">
                     Upload the plain white die-line. The style, box type and size are read from the caption printed
                     on the artwork, so there is usually nothing to type &mdash; fill a field in only to override it.
                 </p>
 
-                <label for="bmTplFile">Die-line image</label>
-                <input type="file" id="bmTplFile" accept="image/png,image/jpeg,image/webp">
+                <label for="bmTplFile">Die-line images <span class="bm-hint-inline">(you can select several at once)</span></label>
+                <input type="file" id="bmTplFile" accept="image/png,image/jpeg,image/webp" multiple>
 
                 <div class="bm-size-row">
                     <div><label for="bmTplStyle">Style (optional)</label><input type="text" id="bmTplStyle" placeholder="TOP-BOTTOM"></div>
@@ -464,6 +468,8 @@
             </details>
         </div>
         </div>
+
+    </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.5.0/fabric.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.all.min.js"></script>

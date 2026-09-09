@@ -125,6 +125,10 @@ async function bmLoadTemplates() {
     }
     bmRefreshStyleOptions();
     bmRenderTemplateList();
+    // Without this the tab just shows two empty dropdowns and no hint that
+    // anything needs uploading first.
+    const empty = document.getElementById('bmEmptyState');
+    if (empty) empty.style.display = bmTemplates.length ? 'none' : 'flex';
 }
 
 // ── Recolouring ──
@@ -442,6 +446,12 @@ document.getElementById('bmDownload').addEventListener('click', function () {
 
 document.getElementById('bmStyle').addEventListener('change', bmRefreshTypeOptions);
 
+document.getElementById('bmGoUpload').addEventListener('click', function () {
+    const d = document.getElementById('bmTplDetails');
+    d.open = true;
+    d.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
 // ── Template management ──
 
 function bmRenderTemplateList() {
@@ -487,37 +497,59 @@ function bmRenderTemplateList() {
 
 document.getElementById('bmTplUpload').addEventListener('click', async function () {
     const msg = document.getElementById('bmTplMsg');
-    const file = document.getElementById('bmTplFile').files[0];
-    if (!file) { showAdminMsg(msg, 'Choose a die-line image first.', true); return; }
+    const files = [...document.getElementById('bmTplFile').files];
+    if (!files.length) { showAdminMsg(msg, 'Choose at least one die-line image first.', true); return; }
 
-    const form = new FormData();
-    form.append('template', file);
-    ['Style', 'Type', 'Size'].forEach(function (k) {
-        const v = document.getElementById('bmTpl' + k).value.trim();
-        if (v) form.append(k.toLowerCase() + 'Label', v);
-    });
+    // The manual overrides only make sense for a single file — with several
+    // selected, every caption is read from its own artwork.
+    const overrides = {};
+    if (files.length === 1) {
+        ['Style', 'Type', 'Size'].forEach(function (k) {
+            const v = document.getElementById('bmTpl' + k).value.trim();
+            if (v) overrides[k.toLowerCase() + 'Label'] = v;
+        });
+    }
 
     this.disabled = true;
     const label = this.textContent;
-    this.textContent = 'Uploading…';
-    showAdminMsg(msg, 'Reading the caption off the artwork…', false);
+    const done = [];
+    const failed = [];
+
     try {
-        const res = await fetch(BACKEND_URL + '/admin/box-template', {
-            method: 'POST', headers: adminAuthHeaders(), body: form,
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Upload failed.');
-        bmTemplates = data.templates || [];
-        bmRefreshStyleOptions();
-        bmRenderTemplateList();
-        const t = data.template;
-        showAdminMsg(msg, 'Saved: ' + t.styleLabel + (t.typeLabel ? ' · ' + t.typeLabel : '')
-            + (t.sizeLabel ? ' · ' + t.sizeLabel : '')
-            + (data.readError ? ' (caption could not be read automatically)' : ''), false);
-        document.getElementById('bmTplFile').value = '';
-        ['Style', 'Type', 'Size'].forEach(function (k) { document.getElementById('bmTpl' + k).value = ''; });
-    } catch (err) {
-        showAdminMsg(msg, err.message, true);
+        for (let i = 0; i < files.length; i++) {
+            this.textContent = files.length > 1 ? ('Uploading ' + (i + 1) + ' of ' + files.length + '…') : 'Uploading…';
+            showAdminMsg(msg, 'Reading the caption off ' + files[i].name + '…', false);
+
+            const form = new FormData();
+            form.append('template', files[i]);
+            Object.keys(overrides).forEach(function (k) { form.append(k, overrides[k]); });
+
+            try {
+                const res = await fetch(BACKEND_URL + '/admin/box-template', {
+                    method: 'POST', headers: adminAuthHeaders(), body: form,
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'upload failed');
+                bmTemplates = data.templates || [];
+                const t = data.template;
+                done.push(t.styleLabel + (t.typeLabel ? ' · ' + t.typeLabel : '') + (t.sizeLabel ? ' · ' + t.sizeLabel : ''));
+            } catch (err) {
+                // One bad file must not abandon the rest of the batch.
+                failed.push(files[i].name + ' (' + err.message + ')');
+            }
+            bmRefreshStyleOptions();
+            bmRenderTemplateList();
+        }
+
+        if (done.length && !failed.length) {
+            showAdminMsg(msg, 'Saved ' + done.length + ': ' + done.join(', '), false);
+            document.getElementById('bmTplFile').value = '';
+            ['Style', 'Type', 'Size'].forEach(function (k) { document.getElementById('bmTpl' + k).value = ''; });
+        } else if (done.length) {
+            showAdminMsg(msg, 'Saved ' + done.length + ', but these failed: ' + failed.join('; '), true);
+        } else {
+            showAdminMsg(msg, 'Nothing saved: ' + failed.join('; '), true);
+        }
     } finally {
         this.disabled = false;
         this.textContent = label;

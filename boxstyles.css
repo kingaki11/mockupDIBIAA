@@ -1402,6 +1402,46 @@ h2 {
 .bm-canvas-wrap .canvas-container { max-width: 100%; }
 .bm-canvas-wrap canvas { max-width: 100%; height: auto !important; }
 
+/* Shown when no die-lines exist yet: two empty dropdowns and nothing else give
+   no clue that anything has to be uploaded first. */
+.bm-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 16px;
+    margin-bottom: 18px;
+    border: 1.5px dashed var(--blue);
+    border-radius: var(--radius-sm);
+    background: #f0f6ff;
+}
+
+.bm-empty strong { font-size: 13.5px; color: var(--text); }
+.bm-empty span { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.bm-empty .admin-btn-primary { width: auto; margin-top: 8px; padding: 9px 18px; }
+
+.bm-hint-inline {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--muted);
+}
+
+/* ── Mockup: tablet/mobile ── */
+@media (max-width: 900px) {
+    #boxMockupPanel { max-width: 100%; }
+}
+
+@media (max-width: 560px) {
+    .bm-size-row { grid-template-columns: 1fr; }
+    .bm-canvas-wrap { padding: 8px; }
+    .bm-empty { padding: 13px; }
+    .bm-empty .admin-btn-primary { width: 100%; }
+    /* A number input at the browser default width overflows a narrow card. */
+    .bm-size-row input[type="number"],
+    .bm-size-row input[type="text"] { width: 100%; box-sizing: border-box; }
+}
+
 /* ── Admin: tablet/mobile ── */
 @media (max-width: 640px) {
     .admin-row {
