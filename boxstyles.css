@@ -1361,7 +1361,25 @@ h2 {
 /* ── Mockup tab ── */
 
 #boxMockupPanel {
-    max-width: 1000px;
+    max-width: 1240px;
+}
+
+/* Controls beside the preview once there is room. A single column left the
+   mockup below the fold on a wide screen, so you could not see the effect of a
+   colour change without scrolling. */
+.bm-layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.bm-controls { min-width: 0; }
+.bm-preview-col { min-width: 0; position: sticky; top: 18px; }
+
+@media (max-width: 1000px) {
+    .bm-layout { grid-template-columns: 1fr; }
+    .bm-preview-col { position: static; }
 }
 
 /* Logo dimensions sit side by side: they are one measurement, not three fields. */
@@ -1428,7 +1446,7 @@ h2 {
 }
 
 /* ── Mockup: tablet/mobile ── */
-@media (max-width: 900px) {
+@media (max-width: 1240px) {
     #boxMockupPanel { max-width: 100%; }
 }
 

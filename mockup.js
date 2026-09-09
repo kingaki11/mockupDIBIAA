@@ -81,6 +81,11 @@ function bmPopulateColours() {
 }
 
 function bmRefreshStyleOptions() {
+    // Lives here rather than in the loader so it also updates straight after an
+    // upload or a delete, not just on a fresh fetch.
+    const empty = document.getElementById('bmEmptyState');
+    if (empty) empty.style.display = bmTemplates.length ? 'none' : 'flex';
+
     const styleSel = document.getElementById('bmStyle');
     const current = styleSel.value;
     const styles = [...new Set(bmTemplates.map(function (t) { return t.styleLabel; }).filter(Boolean))];
@@ -125,33 +130,125 @@ async function bmLoadTemplates() {
     }
     bmRefreshStyleOptions();
     bmRenderTemplateList();
-    // Without this the tab just shows two empty dropdowns and no hint that
-    // anything needs uploading first.
-    const empty = document.getElementById('bmEmptyState');
-    if (empty) empty.style.display = bmTemplates.length ? 'none' : 'flex';
 }
 
 // ── Recolouring ──
 
-// Repaints the template: white becomes the box colour, ink stays ink. Working
-// from luminance rather than an exact white test keeps anti-aliased line edges
-// smooth instead of turning them into a hard staircase.
+// Repaints only the box itself, leaving everything around it transparent.
+//
+// Painting every white pixel floods the whole sheet — the margins and the
+// printed caption end up the box colour too, which is not what a mockup shows.
+// The die-line encloses the panels, so a flood fill inward from the image border
+// separates the two: white reachable from an edge is the sheet around the box,
+// white the fill cannot reach is a panel. Cut lines block the fill, which is
+// exactly what they represent.
+//
+// Panels are then painted and the surrounding sheet is dropped to transparent,
+// keeping only its ink so the caption stays readable.
+const BM_WHITE = 160;        // luminance above which a pixel counts as blank
+const BM_EDGE_GROW = 2;      // px of panel edge absorbed into the painted area
+
 function bmRecolour(sourceCanvas, hex) {
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    const total = w * h;
     const [br, bg, bb] = bmHex(hex);
     const boxLum = 0.299 * br + 0.587 * bg + 0.114 * bb;
-    // On a dark box, black ink on near-black card is invisible. Draw the die-line
-    // in a light tint there so the template stays readable.
+    // On a dark box, black ink on near-black card is invisible.
     const ink = boxLum < 110 ? [245, 245, 245] : [26, 26, 26];
 
     const ctx = sourceCanvas.getContext('2d');
-    const img = ctx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+    const img = ctx.getImageData(0, 0, w, h);
     const d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-        const t = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
-        d[i] = ink[0] + (br - ink[0]) * t;
-        d[i + 1] = ink[1] + (bg - ink[1]) * t;
-        d[i + 2] = ink[2] + (bb - ink[2]) * t;
-        d[i + 3] = 255;
+
+    const lum = new Uint8Array(total);
+    for (let p = 0; p < total; p++) {
+        const i = p * 4;
+        lum[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    }
+
+    // Flood the sheet around the box, stopping at any cut line.
+    const outside = new Uint8Array(total);
+    const queue = new Int32Array(total);
+    let head = 0, tail = 0;
+    const push = (p) => { if (!outside[p] && lum[p] > BM_WHITE) { outside[p] = 1; queue[tail++] = p; } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    while (head < tail) {
+        const p = queue[head++];
+        const x = p % w, y = (p / w) | 0;
+        if (x > 0) push(p - 1);
+        if (x < w - 1) push(p + 1);
+        if (y > 0) push(p - w);
+        if (y < h - 1) push(p + w);
+    }
+
+    // Blank areas the fill never reached. Most are panels, but the counters
+    // inside caption letters — the hole in an O or a Q — are enclosed too, and
+    // painting those speckles the text with box colour. Panels and counters are
+    // not close in size: measured on a template, panels ran 5,000-44,000 px
+    // against counters of 13-16, so discarding the small components is safe with
+    // a wide margin either side of the threshold.
+    const enclosed = new Uint8Array(total);
+    for (let p = 0; p < total; p++) if (!outside[p] && lum[p] > BM_WHITE) enclosed[p] = 1;
+
+    const label = new Int32Array(total);
+    const sizes = [0];
+    let next = 1;
+    for (let start = 0; start < total; start++) {
+        if (!enclosed[start] || label[start]) continue;
+        let count = 0;
+        head = 0; tail = 0;
+        queue[tail++] = start;
+        label[start] = next;
+        while (head < tail) {
+            const p = queue[head++];
+            count++;
+            const x = p % w, y = (p / w) | 0;
+            const step = (q) => { if (enclosed[q] && !label[q]) { label[q] = next; queue[tail++] = q; } };
+            if (x > 0) step(p - 1);
+            if (x < w - 1) step(p + 1);
+            if (y > 0) step(p - w);
+            if (y < h - 1) step(p + w);
+        }
+        sizes.push(count);
+        next++;
+    }
+    let largest = 0;
+    for (let i = 1; i < sizes.length; i++) if (sizes[i] > largest) largest = sizes[i];
+    const minArea = Math.max(total * 0.0015, largest * 0.03);
+
+    let panel = new Uint8Array(total);
+    for (let p = 0; p < total; p++) if (label[p] && sizes[label[p]] >= minArea) panel[p] = 1;
+
+    // Grow over the cut lines so a panel edge is drawn on the box colour rather
+    // than left stranded on the transparent sheet.
+    for (let step = 0; step < BM_EDGE_GROW; step++) {
+        const grown = new Uint8Array(panel);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const p = y * w + x;
+                if (panel[p]) continue;
+                if ((x > 0 && panel[p - 1]) || (x < w - 1 && panel[p + 1])
+                    || (y > 0 && panel[p - w]) || (y < h - 1 && panel[p + w])) grown[p] = 1;
+            }
+        }
+        panel = grown;
+    }
+
+    for (let p = 0; p < total; p++) {
+        const i = p * 4;
+        const t = lum[p] / 255;
+        if (panel[p]) {
+            d[i] = ink[0] + (br - ink[0]) * t;
+            d[i + 1] = ink[1] + (bg - ink[1]) * t;
+            d[i + 2] = ink[2] + (bb - ink[2]) * t;
+            d[i + 3] = 255;
+        } else {
+            // Off the box: keep the ink, drop the paper. Alpha follows darkness,
+            // so anti-aliased caption text keeps its soft edges.
+            d[i] = 26; d[i + 1] = 26; d[i + 2] = 26;
+            d[i + 3] = Math.round((1 - t) * 255);
+        }
     }
     ctx.putImageData(img, 0, 0);
     return sourceCanvas;
@@ -418,7 +515,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             bmCanvas.renderAll();
         });
 
-        document.getElementById('bmResultWrap').style.display = 'block';
+        document.getElementById('bmResultCard').style.display = 'block';
         const colourName = document.getElementById('bmColor').selectedOptions[0].textContent;
         document.getElementById('bmMeta').textContent =
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName

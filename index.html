@@ -376,6 +376,8 @@
         <!-- ── Mockup: recolour a die-line template and place a logo on it ── -->
         <div id="tabPanel-boxmockup" class="tab-panel" style="display:none;">
         <div id="boxMockupPanel" class="admin-panel">
+          <div class="bm-layout">
+            <div class="bm-controls">
             <div class="admin-card">
                 <h2>Box</h2>
                 <p class="admin-card-hint">
@@ -437,6 +439,12 @@
                 <button type="button" id="bmGenerate" class="admin-btn-primary">Generate Mockup</button>
                 <div id="bmMsg" class="admin-msg"></div>
 
+            </div>
+            </div>
+
+            <div class="bm-preview-col">
+              <div class="admin-card" id="bmResultCard" style="display:none;">
+                <h2>Mockup</h2>
                 <div id="bmResultWrap" style="display:none;">
                     <div class="bm-canvas-wrap"><canvas id="bmCanvas"></canvas></div>
                     <div id="bmMeta" class="convert-meta"></div>
@@ -444,7 +452,9 @@
                         <button type="button" id="bmDownload" class="download-button">Download PNG</button>
                     </div>
                 </div>
+              </div>
             </div>
+          </div>
 
             <details class="convert-advanced" id="bmTplDetails">
                 <summary>Manage die-line templates</summary>
