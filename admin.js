@@ -106,7 +106,13 @@ function switchTab(tab) {
         }
     });
     document.querySelectorAll('.app-tab').forEach(function (btn) {
-        btn.classList.toggle('active', btn.dataset.tab === tab);
+        const isActive = btn.dataset.tab === tab;
+        btn.classList.toggle('active', isActive);
+        // The bar scrolls sideways on a phone, so the tab you just chose can sit
+        // off-screen — leaving no visible indication of where you are.
+        if (isActive && btn.scrollIntoView) {
+            btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
     });
     if (tab === 'fields') loadAdminCatalog();
     // Templates are fetched on open rather than at load, so one uploaded in

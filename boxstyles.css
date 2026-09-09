@@ -254,14 +254,23 @@ body {
         justify-content: center;
     }
 
+    /* Four tabs with nowrap labels exceed a phone's width, and because the bar
+       cannot shrink below its content it widened the whole page — which is what
+       pushed every card off the right edge. Scroll the bar instead. */
     .app-tabbar {
         width: 100%;
-        justify-content: center;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
     }
 
+    .app-tabbar::-webkit-scrollbar { display: none; }
+
     .app-tab {
-        flex: 1;
-        padding: 8px 10px;
+        flex: 0 0 auto;
+        padding: 8px 12px;
         text-align: center;
     }
 }
@@ -1358,18 +1367,18 @@ h2 {
 }
 .admin-btn-delete:active { transform: translateY(0); }
 
-/* ── Mockup tab ── */
+/* ── Mockup tab ───────────────────────────────────────────────────────────── */
 
 #boxMockupPanel {
     max-width: 1240px;
 }
 
-/* Controls beside the preview once there is room. A single column left the
+/* Controls beside the preview once there is room. A single column pushed the
    mockup below the fold on a wide screen, so you could not see the effect of a
    colour change without scrolling. */
 .bm-layout {
     display: grid;
-    grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
+    grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
     gap: 20px;
     align-items: start;
 }
@@ -1377,61 +1386,155 @@ h2 {
 .bm-controls { min-width: 0; }
 .bm-preview-col { min-width: 0; position: sticky; top: 18px; }
 
-@media (max-width: 1000px) {
-    .bm-layout { grid-template-columns: 1fr; }
-    .bm-preview-col { position: static; }
+/* Fields */
+
+.bm-field { min-width: 0; }
+
+/* Grid children must not inherit the stacked-form top margin, or the columns
+   sit at different heights. */
+.bm-field label,
+.bm-size-row label {
+    margin-top: 0;
 }
 
-/* Logo dimensions sit side by side: they are one measurement, not three fields. */
+/* number was never covered by the admin input rules, so it fell back to the
+   browser default: a ~60px box with native spinners, which is what made the
+   size fields look broken. */
+.admin-panel input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text);
+    background: var(--white);
+    outline: none;
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-panel input[type="number"]:hover { border-color: #94a3b8; }
+
+.admin-panel input[type="number"]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.14);
+}
+
 .bm-size-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
-    align-items: end;
-    margin-top: 4px;
+    margin-top: 14px;
 }
 
-.bm-size-row label { margin-bottom: 4px; }
+.bm-size-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
-.bm-lock {
-    grid-column: 1 / -1;
+.admin-panel .bm-lock {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-top: 12px;
     font-size: 12.5px;
+    font-weight: 400;
     color: var(--muted);
+    text-transform: none;
+    letter-spacing: normal;
     cursor: pointer;
-    margin: 0;
 }
 
-.bm-lock input { flex: none; }
+.admin-panel .bm-lock input { flex: none; width: auto; margin: 0; }
 
-.bm-canvas-wrap {
-    margin-top: 18px;
+/* Colour swatches */
+
+/* The select still holds the value; it is only hidden from view, not from the
+   accessibility tree's reach via the visible controls. */
+.bm-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.bm-field-label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 14px 0 8px;
+}
+
+.bm-field-label em {
+    font-style: normal;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.bm-swatches {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+    gap: 8px;
+}
+
+.bm-swatch {
+    aspect-ratio: 1;
+    width: 100%;
+    border: 2px solid var(--border);
+    border-radius: 50%;
+    cursor: pointer;
+    padding: 0;
+    outline: none;
+    transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.bm-swatch:hover { transform: scale(1.12); border-color: #94a3b8; }
+.bm-swatch:focus-visible { box-shadow: 0 0 0 3px rgba(37,99,235,.35); }
+
+/* A ring outside the swatch, so it reads on a pale colour and a dark one alike. */
+.bm-swatch.is-active {
+    border-color: var(--white);
+    box-shadow: 0 0 0 3px var(--blue);
+    transform: scale(1.06);
+}
+
+.bm-select-chip { position: relative; }
+
+.bm-chip {
+    position: absolute;
+    right: 40px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
     border: 1.5px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: repeating-conic-gradient(#e2e8f0 0% 25%, white 0% 50%) 0 0 / 16px 16px;
-    padding: 12px;
-    overflow: auto;
+    pointer-events: none;
 }
 
-/* Fabric wraps the canvas in its own container, so both have to shrink or the
-   mockup overflows the card on a narrow screen. */
-.bm-canvas-wrap .canvas-container { max-width: 100%; }
-.bm-canvas-wrap canvas { max-width: 100%; height: auto !important; }
+/* Empty state */
 
-/* Shown when no die-lines exist yet: two empty dropdowns and nothing else give
-   no clue that anything has to be uploaded first. */
 .bm-empty {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
     padding: 16px;
-    margin-bottom: 18px;
+    margin-bottom: 4px;
     border: 1.5px dashed var(--blue);
     border-radius: var(--radius-sm);
-    background: #f0f6ff;
+    background: var(--blue-xlight);
 }
 
 .bm-empty strong { font-size: 13.5px; color: var(--text); }
@@ -1445,19 +1548,124 @@ h2 {
     color: var(--muted);
 }
 
-/* ── Mockup: tablet/mobile ── */
+/* Preview */
+
+.bm-preview-card { min-height: 320px; }
+
+/* Without this the right-hand column is an empty card until something is
+   generated, which reads as a rendering fault rather than an empty state. */
+.bm-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 260px;
+    padding: 24px;
+    text-align: center;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+}
+
+.bm-placeholder-icon { font-size: 34px; line-height: 1; color: #cbd5e1; }
+.bm-placeholder strong { font-size: 14px; color: var(--text); }
+.bm-placeholder span { font-size: 12.5px; color: var(--muted); max-width: 34ch; line-height: 1.55; }
+
+/* Templates section. Styled here rather than borrowing the Convert tab's
+   classes, which have been rewritten once already and left this section
+   unstyled when one of them was removed. */
+.bm-templates-card { margin-top: 20px; }
+
+.bm-details summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+    padding: 0;
+    user-select: none;
+}
+
+.bm-details summary::-webkit-details-marker { display: none; }
+
+.bm-details summary::before {
+    content: '';
+    width: 0; height: 0;
+    border-left: 6px solid var(--muted);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    transition: transform 160ms ease;
+}
+
+.bm-details[open] summary::before { transform: rotate(90deg); }
+.bm-details summary:hover { color: var(--blue); }
+
+.bm-details-hint {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin: 10px 0 18px;
+}
+
+/* The native control renders as a bare grey button inside our dashed box. */
+.admin-panel input[type="file"]::file-selector-button {
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--blue);
+    background: var(--blue-xlight);
+    border: 1px solid var(--blue-light);
+    border-radius: 999px;
+    padding: 6px 14px;
+    margin-right: 12px;
+    cursor: pointer;
+    transition: background 160ms ease, border-color 160ms ease;
+}
+
+.admin-panel input[type="file"]::file-selector-button:hover {
+    background: var(--blue-light);
+    border-color: var(--blue);
+}
+
+/* Template rows */
+.bm-templates-card .admin-list { margin-top: 16px; }
+
+.bm-canvas-wrap {
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: repeating-conic-gradient(#e2e8f0 0% 25%, white 0% 50%) 0 0 / 16px 16px;
+    padding: 12px;
+    display: flex;
+    justify-content: center;
+}
+
+/* Fabric wraps the canvas in a container of its own, so both have to shrink or
+   the mockup overflows the card. */
+.bm-canvas-wrap .canvas-container { max-width: 100% !important; height: auto !important; }
+.bm-canvas-wrap canvas { max-width: 100%; height: auto !important; }
+
+/* ── Mockup: responsive ── */
+
 @media (max-width: 1240px) {
     #boxMockupPanel { max-width: 100%; }
 }
 
+@media (max-width: 1000px) {
+    .bm-layout { grid-template-columns: 1fr; }
+    .bm-preview-col { position: static; }
+}
+
 @media (max-width: 560px) {
-    .bm-size-row { grid-template-columns: 1fr; }
+    .bm-size-row,
+    .bm-size-row-3 { grid-template-columns: 1fr; }
     .bm-canvas-wrap { padding: 8px; }
     .bm-empty { padding: 13px; }
     .bm-empty .admin-btn-primary { width: 100%; }
-    /* A number input at the browser default width overflows a narrow card. */
-    .bm-size-row input[type="number"],
-    .bm-size-row input[type="text"] { width: 100%; box-sizing: border-box; }
+    .bm-swatches { grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap: 7px; }
 }
 
 /* ── Admin: tablet/mobile ── */

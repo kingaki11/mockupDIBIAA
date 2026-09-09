@@ -397,11 +397,17 @@
                 <label for="bmType">Box Type</label>
                 <select id="bmType"><option value="">--Select--</option></select>
 
-                <label for="bmColor">Box Colour</label>
-                <select id="bmColor"><option value="">--Select--</option></select>
+                <span class="bm-field-label">Box Colour <em id="bmColorName">none selected</em></span>
+                <!-- The select stays as the value holder so nothing downstream changes;
+                     the swatches are just a readable way to operate it. -->
+                <select id="bmColor" class="bm-sr-only" tabindex="-1"><option value="">--Select--</option></select>
+                <div id="bmSwatches" class="bm-swatches"></div>
 
                 <label for="bmPrintColor">Printing Colour</label>
-                <select id="bmPrintColor"><option value="">--Select--</option></select>
+                <div class="bm-select-chip">
+                    <select id="bmPrintColor"><option value="">--Select--</option></select>
+                    <span id="bmPrintChip" class="bm-chip" aria-hidden="true"></span>
+                </div>
 
                 <div id="bmBoxMsg" class="admin-msg"></div>
             </div>
@@ -422,19 +428,19 @@
                 <input type="file" id="bmLogoFile" accept="image/png,image/jpeg,image/webp" hidden>
 
                 <div class="bm-size-row">
-                    <div>
+                    <div class="bm-field">
                         <label for="bmLogoLength">Logo length (in)</label>
                         <input type="number" id="bmLogoLength" min="0.1" max="24" step="0.05" value="1">
                     </div>
-                    <div>
+                    <div class="bm-field">
                         <label for="bmLogoBreadth">Logo breadth (in)</label>
                         <input type="number" id="bmLogoBreadth" min="0.1" max="24" step="0.05" value="0.5">
                     </div>
-                    <label class="bm-lock">
-                        <input type="checkbox" id="bmKeepRatio" checked>
-                        <span>Keep the logo&rsquo;s own proportions</span>
-                    </label>
                 </div>
+                <label class="bm-lock">
+                    <input type="checkbox" id="bmKeepRatio" checked>
+                    <span>Keep the logo&rsquo;s own proportions</span>
+                </label>
 
                 <button type="button" id="bmGenerate" class="admin-btn-primary">Generate Mockup</button>
                 <div id="bmMsg" class="admin-msg"></div>
@@ -443,8 +449,13 @@
             </div>
 
             <div class="bm-preview-col">
-              <div class="admin-card" id="bmResultCard" style="display:none;">
+              <div class="admin-card bm-preview-card">
                 <h2>Mockup</h2>
+                <div id="bmPlaceholder" class="bm-placeholder">
+                    <span class="bm-placeholder-icon" aria-hidden="true">&#9744;</span>
+                    <strong>Your mockup appears here</strong>
+                    <span>Pick a die-line and colour, add a logo, then press Generate Mockup.</span>
+                </div>
                 <div id="bmResultWrap" style="display:none;">
                     <div class="bm-canvas-wrap"><canvas id="bmCanvas"></canvas></div>
                     <div id="bmMeta" class="convert-meta"></div>
@@ -456,9 +467,10 @@
             </div>
           </div>
 
-            <details class="convert-advanced" id="bmTplDetails">
+          <div class="admin-card bm-templates-card">
+            <details class="bm-details" id="bmTplDetails">
                 <summary>Manage die-line templates</summary>
-                <p class="convert-advanced-hint">
+                <p class="bm-details-hint">
                     Upload the plain white die-line. The style, box type and size are read from the caption printed
                     on the artwork, so there is usually nothing to type &mdash; fill a field in only to override it.
                 </p>
@@ -466,16 +478,17 @@
                 <label for="bmTplFile">Die-line images <span class="bm-hint-inline">(you can select several at once)</span></label>
                 <input type="file" id="bmTplFile" accept="image/png,image/jpeg,image/webp" multiple>
 
-                <div class="bm-size-row">
-                    <div><label for="bmTplStyle">Style (optional)</label><input type="text" id="bmTplStyle" placeholder="TOP-BOTTOM"></div>
-                    <div><label for="bmTplType">Type (optional)</label><input type="text" id="bmTplType" placeholder="RING BOX"></div>
-                    <div><label for="bmTplSize">Size (optional)</label><input type="text" id="bmTplSize" placeholder="2X2X1.5"></div>
+                <div class="bm-size-row bm-size-row-3">
+                    <div class="bm-field"><label for="bmTplStyle">Style (optional)</label><input type="text" id="bmTplStyle" placeholder="TOP-BOTTOM"></div>
+                    <div class="bm-field"><label for="bmTplType">Type (optional)</label><input type="text" id="bmTplType" placeholder="RING BOX"></div>
+                    <div class="bm-field"><label for="bmTplSize">Size (optional)</label><input type="text" id="bmTplSize" placeholder="2X2X1.5"></div>
                 </div>
 
                 <button type="button" id="bmTplUpload" class="admin-btn-primary">Upload template</button>
                 <div id="bmTplMsg" class="admin-msg"></div>
                 <div id="bmTplList" class="admin-list"></div>
             </details>
+          </div>
         </div>
         </div>
 

@@ -57,12 +57,31 @@ function bmHex(hex) {
 
 function bmPopulateColours() {
     const sel = document.getElementById('bmColor');
+    const grid = document.getElementById('bmSwatches');
+    const nameEl = document.getElementById('bmColorName');
+
     BOX_COLOURS.forEach(function (pair) {
         const o = document.createElement('option');
         o.value = pair[1];
         o.textContent = pair[0];
-        o.dataset.label = pair[0];
         sel.appendChild(o);
+
+        // Twenty-six colours are unusable as a list of names — you cannot tell
+        // MAROON from WINE without seeing them. The select still holds the value;
+        // this is just a legible way to set it.
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'bm-swatch';
+        b.style.background = pair[1];
+        b.title = pair[0] + ' · ' + pair[1];
+        b.setAttribute('aria-label', pair[0]);
+        b.addEventListener('click', function () {
+            sel.value = pair[1];
+            nameEl.textContent = pair[0];
+            grid.querySelectorAll('.bm-swatch').forEach(function (el) { el.classList.remove('is-active'); });
+            b.classList.add('is-active');
+        });
+        grid.appendChild(b);
     });
 
     // Printing colours come from the same map the Create Mockup tab recolours
@@ -78,6 +97,16 @@ function bmPopulateColours() {
         o.textContent = key.charAt(0).toUpperCase() + key.slice(1);
         print.appendChild(o);
     });
+
+    // Show the ink colour rather than only naming it.
+    const chip = document.getElementById('bmPrintChip');
+    const syncChip = function () {
+        const rgb = colorMap[(print.value || '').toLowerCase()];
+        chip.style.background = rgb ? 'rgb(' + rgb.join(',') + ')' : 'transparent';
+        chip.style.display = rgb ? 'block' : 'none';
+    };
+    print.addEventListener('change', syncChip);
+    syncChip();
 }
 
 function bmRefreshStyleOptions() {
@@ -515,8 +544,9 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             bmCanvas.renderAll();
         });
 
-        document.getElementById('bmResultCard').style.display = 'block';
-        const colourName = document.getElementById('bmColor').selectedOptions[0].textContent;
+        document.getElementById('bmPlaceholder').style.display = 'none';
+        document.getElementById('bmResultWrap').style.display = 'block';
+        const colourName = document.getElementById('bmColorName').textContent;
         document.getElementById('bmMeta').textContent =
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName
             + ' · ' + sizeNote + ' · drag or resize the logo to adjust';
