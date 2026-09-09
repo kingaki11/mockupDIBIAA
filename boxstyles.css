@@ -1643,10 +1643,12 @@ h2 {
     justify-content: center;
 }
 
-/* Fabric wraps the canvas in a container of its own, so both have to shrink or
-   the mockup overflows the card. */
-.bm-canvas-wrap .canvas-container { max-width: 100% !important; height: auto !important; }
-.bm-canvas-wrap canvas { max-width: 100%; height: auto !important; }
+/* Fabric sizes its container and both canvas layers with inline styles. The
+   canvas is now built to fit, so these are only a backstop for a resize between
+   generating and looking. Height stays auto so the two layers cannot drift apart
+   and misplace the pointer. */
+.bm-canvas-wrap .canvas-container { max-width: 100% !important; }
+.bm-canvas-wrap canvas { max-width: 100% !important; }
 
 /* ── Mockup: responsive ── */
 

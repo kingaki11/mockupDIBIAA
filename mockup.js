@@ -36,7 +36,12 @@ const BOX_COLOURS = [
     ['Laminated - Green', '#26514E'],
 ];
 
-const BM_CANVAS_WIDTH = 900;     // on-screen width; export scales back up
+// Fabric writes its own pixel width/height onto the canvas elements inline, so
+// a fixed size cannot be reined in by CSS afterwards without breaking the
+// pointer maths that makes the logo draggable. Measure the space available and
+// build the canvas at that size instead.
+const BM_CANVAS_MIN = 260;
+const BM_CANVAS_MAX = 1100;
 
 let bmTemplates = [];
 let bmLogoFile = null;
@@ -174,10 +179,63 @@ async function bmLoadTemplates() {
 //
 // Panels are then painted and the surrounding sheet is dropped to transparent,
 // keeping only its ink so the caption stays readable.
-const BM_WHITE = 160;        // luminance above which a pixel counts as blank
+const BM_WHITE = 205;        // luminance above which a pixel counts as blank
 const BM_EDGE_GROW = 2;      // px of panel edge absorbed into the painted area
+// A panel that survives the fill should account for a decent share of the sheet.
+// Well under this means the fill escaped through a broken line rather than that
+// the die-line genuinely has little area.
+const BM_MIN_PAINTED = 0.25;
 
-function bmRecolour(sourceCanvas, hex) {
+// Marks the sheet around the box, stopping at cut lines. Lines are thickened by
+// `grow` first: a hairline in a scaled or JPEG-compressed die-line breaks into
+// gaps a single pixel wide, and one gap anywhere lets the fill flood a panel and
+// leave it unpainted.
+function bmFloodOutside(lum, w, h, grow) {
+    const total = w * h;
+    const blocked = new Uint8Array(total);
+    for (let p = 0; p < total; p++) if (lum[p] <= BM_WHITE) blocked[p] = 1;
+
+    for (let step = 0; step < grow; step++) {
+        const wider = new Uint8Array(blocked);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const p = y * w + x;
+                if (blocked[p]) continue;
+                if ((x > 0 && blocked[p - 1]) || (x < w - 1 && blocked[p + 1])
+                    || (y > 0 && blocked[p - w]) || (y < h - 1 && blocked[p + w])) wider[p] = 1;
+            }
+        }
+        blocked.set(wider);
+    }
+
+    const outside = new Uint8Array(total);
+    const queue = new Int32Array(total);
+    let head = 0, tail = 0;
+    const push = (p) => { if (!outside[p] && !blocked[p]) { outside[p] = 1; queue[tail++] = p; } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    while (head < tail) {
+        const p = queue[head++];
+        const x = p % w, y = (p / w) | 0;
+        if (x > 0) push(p - 1);
+        if (x < w - 1) push(p + 1);
+        if (y > 0) push(p - w);
+        if (y < h - 1) push(p + w);
+    }
+    return { outside, blocked };
+}
+
+// Repaints only the box itself, leaving everything around it transparent.
+//
+// Painting every white pixel floods the whole sheet — the margins and the
+// printed caption end up the box colour too, which is not what a mockup shows.
+// The die-line encloses the panels, so a flood fill inward from the image border
+// separates the two: white reachable from an edge is the sheet around the box,
+// white the fill cannot reach is a panel.
+//
+// Panels are then painted and the surrounding sheet is dropped to transparent,
+// keeping only its ink so the caption stays readable.
+function bmRecolour(sourceCanvas, hex, region) {
     const w = sourceCanvas.width, h = sourceCanvas.height;
     const total = w * h;
     const [br, bg, bb] = bmHex(hex);
@@ -195,38 +253,37 @@ function bmRecolour(sourceCanvas, hex) {
         lum[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
     }
 
-    // Flood the sheet around the box, stopping at any cut line.
-    const outside = new Uint8Array(total);
-    const queue = new Int32Array(total);
-    let head = 0, tail = 0;
-    const push = (p) => { if (!outside[p] && lum[p] > BM_WHITE) { outside[p] = 1; queue[tail++] = p; } };
-    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
-    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
-    while (head < tail) {
-        const p = queue[head++];
-        const x = p % w, y = (p / w) | 0;
-        if (x > 0) push(p - 1);
-        if (x < w - 1) push(p + 1);
-        if (y > 0) push(p - w);
-        if (y < h - 1) push(p + w);
+    // How much of the drawing we would expect a healthy fill to cover.
+    const artArea = region
+        ? Math.max(1, (region.right - region.left) * (region.bottom - region.top))
+        : total;
+
+    // Try progressively thicker lines until the panels stop leaking. A clean
+    // die-line succeeds on the first pass and never pays for the rest.
+    let best = null;
+    for (const grow of [1, 2, 3, 5]) {
+        const { outside } = bmFloodOutside(lum, w, h, grow);
+        let painted = 0;
+        const mask = new Uint8Array(total);
+        for (let p = 0; p < total; p++) {
+            if (!outside[p] && lum[p] > BM_WHITE) { mask[p] = 1; painted++; }
+        }
+        if (!best || painted > best.painted) best = { mask, painted };
+        if (painted / artArea >= BM_MIN_PAINTED) break;
     }
 
-    // Blank areas the fill never reached. Most are panels, but the counters
-    // inside caption letters — the hole in an O or a Q — are enclosed too, and
-    // painting those speckles the text with box colour. Panels and counters are
-    // not close in size: measured on a template, panels ran 5,000-44,000 px
-    // against counters of 13-16, so discarding the small components is safe with
-    // a wide margin either side of the threshold.
-    const enclosed = new Uint8Array(total);
-    for (let p = 0; p < total; p++) if (!outside[p] && lum[p] > BM_WHITE) enclosed[p] = 1;
-
+    // Enclosed does not always mean panel: the counters inside caption letters —
+    // the hole in an O or a Q — are enclosed too, and painting them speckles the
+    // text. Panels and counters are far apart in size (measured: 5,000-44,000 px
+    // against 13-16), so discarding small components is safe.
+    const enclosed = best.mask;
     const label = new Int32Array(total);
+    const queue = new Int32Array(total);
     const sizes = [0];
     let next = 1;
     for (let start = 0; start < total; start++) {
         if (!enclosed[start] || label[start]) continue;
-        let count = 0;
-        head = 0; tail = 0;
+        let count = 0, head = 0, tail = 0;
         queue[tail++] = start;
         label[start] = next;
         while (head < tail) {
@@ -244,7 +301,7 @@ function bmRecolour(sourceCanvas, hex) {
     }
     let largest = 0;
     for (let i = 1; i < sizes.length; i++) if (sizes[i] > largest) largest = sizes[i];
-    const minArea = Math.max(total * 0.0015, largest * 0.03);
+    const minArea = Math.max(total * 0.0006, largest * 0.02);
 
     let panel = new Uint8Array(total);
     for (let p = 0; p < total; p++) if (label[p] && sizes[label[p]] >= minArea) panel[p] = 1;
@@ -273,8 +330,7 @@ function bmRecolour(sourceCanvas, hex) {
             d[i + 2] = ink[2] + (bb - ink[2]) * t;
             d[i + 3] = 255;
         } else {
-            // Off the box: keep the ink, drop the paper. Alpha follows darkness,
-            // so anti-aliased caption text keeps its soft edges.
+            // Off the box: keep the ink, drop the paper.
             d[i] = 26; d[i + 1] = 26; d[i + 2] = 26;
             d[i + 3] = Math.round((1 - t) * 255);
         }
@@ -490,9 +546,18 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         full.height = tplImg.naturalHeight;
         full.getContext('2d').drawImage(tplImg, 0, 0);
         const region = bmArtworkRegion(full);
-        bmRecolour(full, colour);
+        bmRecolour(full, colour, region);
 
-        const scale = BM_CANVAS_WIDTH / full.width;
+        // Reveal the result first: a hidden element measures zero wide.
+        document.getElementById('bmPlaceholder').style.display = 'none';
+        document.getElementById('bmResultWrap').style.display = 'block';
+
+        const wrap = document.querySelector('.bm-canvas-wrap');
+        const styles = window.getComputedStyle(wrap);
+        const inner = wrap.clientWidth
+            - parseFloat(styles.paddingLeft || 0) - parseFloat(styles.paddingRight || 0);
+        const displayWidth = Math.max(BM_CANVAS_MIN, Math.min(BM_CANVAS_MAX, Math.floor(inner) || BM_CANVAS_MIN));
+        const scale = displayWidth / full.width;
         bmExportMultiplier = 1 / scale;
         const dispW = Math.round(full.width * scale);
         const dispH = Math.round(full.height * scale);
@@ -544,8 +609,6 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             bmCanvas.renderAll();
         });
 
-        document.getElementById('bmPlaceholder').style.display = 'none';
-        document.getElementById('bmResultWrap').style.display = 'block';
         const colourName = document.getElementById('bmColorName').textContent;
         document.getElementById('bmMeta').textContent =
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName
