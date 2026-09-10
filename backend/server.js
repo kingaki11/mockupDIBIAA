@@ -1069,6 +1069,120 @@ app.delete('/admin/box-template/:id', requireAdmin, (req, res) => {
     }
 });
 
+// ── Mockup tab: vector export ────────────────────────────────────────────────
+// The on-screen mockup is a bitmap: a recoloured die-line with a logo composited
+// over it. Exporting that as an SVG wrapping a base64 PNG would be a vector file
+// in name only — no detail to zoom into and nothing to ungroup. So each layer is
+// traced to real paths instead.
+//
+// The browser sends the two masks it already computed while rendering rather
+// than the backend re-deriving them, which keeps one implementation of "which
+// pixels are panel" instead of two that can drift apart.
+
+function svgInner(svg) {
+    const open = svg.indexOf('>', svg.indexOf('<svg'));
+    const close = svg.lastIndexOf('</svg>');
+    return (open === -1 || close === -1) ? '' : svg.slice(open + 1, close).trim();
+}
+
+// Traces one black-on-white layer into separate, individually selectable paths.
+function traceLayer(buffer, fill) {
+    return new Promise((resolve, reject) => {
+        potrace.trace(buffer, {
+            ...MAX_DETAIL_TRACE_OPTIONS,
+            color: fill,
+            threshold: 128,
+            blackOnWhite: true,
+        }, (err, svg) => {
+            if (err) return reject(err);
+            try {
+                resolve(svgInner(splitCompoundPaths(svg)));
+            } catch (splitErr) {
+                console.warn('Layer split skipped:', splitErr.message);
+                resolve(svgInner(svg));
+            }
+        });
+    });
+}
+
+app.post('/api/mockup/svg', requireAdmin, upload.fields([
+    { name: 'panelMask', maxCount: 1 },
+    { name: 'inkMask', maxCount: 1 },
+    { name: 'logo', maxCount: 1 },
+]), async (req, res) => {
+    const files = req.files || {};
+    const panelMask = files.panelMask && files.panelMask[0];
+    const inkMask = files.inkMask && files.inkMask[0];
+    const logo = files.logo && files.logo[0];
+
+    if (!panelMask || !inkMask) {
+        return res.status(400).json({ error: 'panelMask and inkMask are both required.' });
+    }
+
+    const width = clampInt(req.body.width, 1, 20000, 1000);
+    const height = clampInt(req.body.height, 1, 20000, 1000);
+    const boxColor = /^#[0-9a-f]{6}$/i.test(req.body.boxColor || '') ? req.body.boxColor : '#cccccc';
+    const inkColor = /^#[0-9a-f]{6}$/i.test(req.body.inkColor || '') ? req.body.inkColor : '#1a1a1a';
+    const printColor = /^#[0-9a-f]{6}$/i.test(req.body.printColor || '') ? req.body.printColor : null;
+
+    try {
+        const layers = [];
+
+        const panels = await traceLayer(panelMask.buffer, boxColor);
+        if (panels) layers.push('<g id="box-panels">\n' + panels + '\n</g>');
+
+        const ink = await traceLayer(inkMask.buffer, inkColor);
+        if (ink) layers.push('<g id="cut-lines">\n' + ink + '\n</g>');
+
+        if (logo) {
+            const lx = parseFloat(req.body.logoX);
+            const ly = parseFloat(req.body.logoY);
+            const lw = parseFloat(req.body.logoW);
+            const lh = parseFloat(req.body.logoH);
+
+            const logoImage = await Jimp.read(logo.buffer);
+            let inner = '';
+            let viewW = logoImage.bitmap.width;
+            let viewH = logoImage.bitmap.height;
+
+            if (printColor) {
+                // Single ink: potrace gives one clean silhouette per shape.
+                const flat = await flattenOntoWhite(logoImage);
+                inner = await traceLayer(flat, printColor);
+            } else {
+                // Keeping the logo's own colours needs colour clustering, which is
+                // what VTracer is for; potrace only ever produces one fill.
+                const traced = await vectorizeToSvg(
+                    await logoImage.getBufferAsync(Jimp.MIME_PNG),
+                    parseVectorizeOptions(),
+                    VTRACER_TIMEOUT_MS,
+                );
+                inner = svgInner(traced.svg);
+                const m = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(traced.svg);
+                if (m) { viewW = parseFloat(m[1]); viewH = parseFloat(m[2]); }
+            }
+
+            if (inner && Number.isFinite(lx) && Number.isFinite(ly) && lw > 0 && lh > 0) {
+                // The trace is in its own pixel space; place it where the user
+                // left it on the mockup.
+                const sx = lw / viewW;
+                const sy = lh / viewH;
+                layers.push(
+                    `<g id="logo" transform="translate(${lx.toFixed(2)} ${ly.toFixed(2)}) scale(${sx.toFixed(5)} ${sy.toFixed(5)})">\n`
+                    + inner + '\n</g>'
+                );
+            }
+        }
+
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" `
+            + `viewBox="0 0 ${width} ${height}" version="1.1">\n${layers.join('\n')}\n</svg>`;
+        res.json({ svg });
+    } catch (err) {
+        console.error('Mockup vector export failed:', err);
+        res.status(500).json({ error: 'Could not build the vector file.', detail: err.message });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`mockupdibiaa-backend listening on port ${PORT}`);

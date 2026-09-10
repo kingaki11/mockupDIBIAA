@@ -50,6 +50,10 @@ let bmLogoNatural = { w: 0, h: 0 };
 let bmCanvas = null;
 let bmLogoObject = null;
 let bmExportMultiplier = 1;
+// What the vector export needs, captured while rendering: the same masks the
+// recolour worked from, so the SVG cannot disagree with the picture on screen.
+let bmLastRender = null;
+let bmLogoSource = null;      // recoloured logo PNG, reused by the vector export
 
 function bmHex(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
@@ -336,7 +340,30 @@ function bmRecolour(sourceCanvas, hex, region) {
         }
     }
     ctx.putImageData(img, 0, 0);
-    return sourceCanvas;
+
+    // Black-on-white copies of the two layers, for potrace to trace later. Built
+    // here because this is where the panel/ink split is actually decided.
+    const layerCanvas = (test) => {
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const cctx = c.getContext('2d');
+        const li = cctx.createImageData(w, h);
+        const ld = li.data;
+        for (let p = 0; p < total; p++) {
+            const v = test(p) ? 0 : 255;
+            const i = p * 4;
+            ld[i] = v; ld[i + 1] = v; ld[i + 2] = v; ld[i + 3] = 255;
+        }
+        cctx.putImageData(li, 0, 0);
+        return c;
+    };
+
+    return {
+        canvas: sourceCanvas,
+        panelMask: layerCanvas((p) => panel[p]),
+        inkMask: layerCanvas((p) => lum[p] <= BM_WHITE),
+        ink: '#' + ink.map((n) => n.toString(16).padStart(2, '0')).join(''),
+    };
 }
 
 // Finds where the die-line drawing ends and its printed caption begins.
@@ -536,6 +563,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
     try {
         if (!bmLogoUrl) bmLogoUrl = await bmCutoutLogo(bmLogoFile);
         const coloured = await bmApplyPrintingColour(bmLogoUrl, printing);
+        bmLogoSource = coloured;
 
         const tplImg = await bmLoadImage(BACKEND_URL + '/box-template-image/' + tpl.id);
 
@@ -546,7 +574,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         full.height = tplImg.naturalHeight;
         full.getContext('2d').drawImage(tplImg, 0, 0);
         const region = bmArtworkRegion(full);
-        bmRecolour(full, colour, region);
+        const layers = bmRecolour(full, colour, region);
 
         // Reveal the result first: a hidden element measures zero wide.
         document.getElementById('bmPlaceholder').style.display = 'none';
@@ -609,6 +637,20 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             bmCanvas.renderAll();
         });
 
+        const printRgb = colorMap[(printing || '').toLowerCase()];
+        bmLastRender = {
+            panelMask: layers.panelMask,
+            inkMask: layers.inkMask,
+            width: full.width,
+            height: full.height,
+            boxColor: colour,
+            inkColor: layers.ink,
+            printColor: printRgb
+                ? '#' + printRgb.map(function (n) { return n.toString(16).padStart(2, '0'); }).join('')
+                : null,
+            scale: scale,
+        };
+
         const colourName = document.getElementById('bmColorName').textContent;
         document.getElementById('bmMeta').textContent =
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName
@@ -632,6 +674,79 @@ document.getElementById('bmDownload').addEventListener('click', function () {
     const name = (tpl ? tpl.id : 'mockup') + '-mockup.png';
     const a = document.createElement('a');
     a.href = url; a.download = name; a.click();
+});
+
+// Vector export. Each layer is traced separately on the server and returned as
+// individually selectable paths, so the file opens in CorelDRAW as real curves
+// that can be ungrouped — not a PNG in an SVG wrapper.
+function bmCanvasToBlob(canvas) {
+    return new Promise(function (resolve) { canvas.toBlob(resolve, 'image/png'); });
+}
+
+function bmDataUrlToBlob(dataUrl) {
+    const [head, body] = dataUrl.split(',');
+    const mime = /:(.*?);/.exec(head)[1];
+    const bin = atob(body);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+}
+
+document.getElementById('bmDownloadSvg').addEventListener('click', async function () {
+    const msg = document.getElementById('bmMsg');
+    if (!bmLastRender) { showAdminMsg(msg, 'Generate a mockup first.', true); return; }
+
+    this.disabled = true;
+    const label = this.textContent;
+    this.textContent = 'Tracing…';
+    showAdminMsg(msg, 'Tracing the die-line and logo into vector paths…', false);
+
+    try {
+        const form = new FormData();
+        form.append('panelMask', await bmCanvasToBlob(bmLastRender.panelMask), 'panel.png');
+        form.append('inkMask', await bmCanvasToBlob(bmLastRender.inkMask), 'ink.png');
+        form.append('width', String(bmLastRender.width));
+        form.append('height', String(bmLastRender.height));
+        form.append('boxColor', bmLastRender.boxColor);
+        form.append('inkColor', bmLastRender.inkColor);
+        if (bmLastRender.printColor) form.append('printColor', bmLastRender.printColor);
+
+        // Take the placement off the canvas, not from the form: the logo may have
+        // been dragged or resized since it was generated.
+        if (bmLogoObject && bmLogoSource) {
+            const s = bmLastRender.scale;
+            const w = bmLogoObject.width * bmLogoObject.scaleX;
+            const h = bmLogoObject.height * bmLogoObject.scaleY;
+            form.append('logo', bmDataUrlToBlob(bmLogoSource), 'logo.png');
+            form.append('logoX', String((bmLogoObject.left - w / 2) / s));
+            form.append('logoY', String((bmLogoObject.top - h / 2) / s));
+            form.append('logoW', String(w / s));
+            form.append('logoH', String(h / s));
+        }
+
+        const res = await fetch(BACKEND_URL + '/api/mockup/svg', {
+            method: 'POST', headers: adminAuthHeaders(), body: form,
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok) throw new Error(data.error || 'Vector export failed (' + res.status + ').');
+
+        const tpl = bmSelectedTemplate();
+        const blob = new Blob([data.svg], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (tpl ? tpl.id : 'mockup') + '-mockup.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+
+        const objects = (data.svg.match(/<path/g) || []).length;
+        showAdminMsg(msg, 'Vector downloaded — ' + objects + ' separate objects, ungroup in CorelDRAW to edit them.', false);
+    } catch (err) {
+        showAdminMsg(msg, err.message, true);
+    } finally {
+        this.disabled = false;
+        this.textContent = label;
+    }
 });
 
 document.getElementById('bmStyle').addEventListener('change', bmRefreshTypeOptions);
