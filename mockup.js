@@ -1016,7 +1016,66 @@ function bm3dDispose() {
 // why a real one has a visible lip and a seam partway down the side. Modelling
 // it as a single block hid exactly the detail the customer is looking at.
 const BM_LID_ALLOWANCE = 0.25;   // inches added to length and width
-const BM_LID_HEIGHT_FRACTION = 0.46;
+// Measured off real top-bottom boxes: the lid is deep, covering roughly
+// three-quarters of the assembled height, with the base showing as a thin strip
+// at the bottom. At half and half it read as two stacked blocks rather than as a
+// lid on a box.
+const BM_LID_HEIGHT_FRACTION = 0.74;
+// Board has a thickness and a crease; nothing folded from paper has a
+// mathematically sharp corner. Rounding by a small fraction of the shortest edge
+// is most of what separates a rendered box from a rendered cube.
+const BM_CORNER_ROUND = 0.045;
+
+// A box with softened edges.
+//
+// three's RoundedBoxGeometry lives in examples/, which the UMD build on the CDN
+// does not carry, so this rounds a segmented BoxGeometry directly: each vertex is
+// pushed out from the nearest point on an inset box, which leaves flat faces flat
+// and curves only the edges and corners. Face UVs are untouched, so the logo
+// still lands where it should.
+function bmRoundedBox(w, h, d, radius) {
+    const r = Math.min(radius, w / 2, h / 2, d / 2);
+    const geo = new THREE.BoxGeometry(w, h, d, 5, 5, 5);
+    const pos = geo.attributes.position;
+    const ix = w / 2 - r, iy = h / 2 - r, iz = d / 2 - r;
+    const v = new THREE.Vector3();
+    const inner = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        inner.set(
+            Math.max(-ix, Math.min(ix, v.x)),
+            Math.max(-iy, Math.min(iy, v.y)),
+            Math.max(-iz, Math.min(iz, v.z))
+        );
+        v.sub(inner);
+        if (v.lengthSq() > 1e-10) v.setLength(r);
+        v.add(inner);
+        pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    geo.computeVertexNormals();
+    return geo;
+}
+
+// A soft contact shadow so the box sits on something instead of floating.
+function bmShadowPlane(spanX, spanZ) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 126);
+    g.addColorStop(0, 'rgba(15,23,42,0.46)');
+    g.addColorStop(0.5, 'rgba(15,23,42,0.18)');
+    g.addColorStop(1, 'rgba(15,23,42,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 256, 256);
+    const tex = new THREE.Texture(c);
+    tex.needsUpdate = true;
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(spanX, spanZ),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    return mesh;
+}
 
 function bmIsTopBottom(styleLabel) {
     const t = String(styleLabel || '').toUpperCase();
@@ -1063,7 +1122,8 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         const lidH = H * BM_LID_HEIGHT_FRACTION;
         const baseH = H - lidH * 0.5;          // the lid overlaps the base's top
 
-        const baseGeo = new THREE.BoxGeometry(L * u, baseH * u, W * u);
+        const round = BM_CORNER_ROUND * Math.min(L, W, H) * u;
+        const baseGeo = bmRoundedBox(L * u, baseH * u, W * u, round);
         const baseMesh = new THREE.Mesh(baseGeo, [
             faceMat(baseH, W), faceMat(baseH, W),
             faceMat(L, W), faceMat(L, W),
@@ -1073,7 +1133,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         pivot.add(baseMesh);
         meshes.push(baseMesh);
 
-        const lidGeo = new THREE.BoxGeometry((L + gap) * u, lidH * u, (W + gap) * u);
+        const lidGeo = bmRoundedBox((L + gap) * u, lidH * u, (W + gap) * u, round);
         lidTopMaterial = faceMat(L + gap, W + gap, logoImage, logoFrac);
         const lidMesh = new THREE.Mesh(lidGeo, [
             faceMat(lidH, W + gap), faceMat(lidH, W + gap),
@@ -1084,7 +1144,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         pivot.add(lidMesh);
         meshes.push(lidMesh);
     } else {
-        const geo = new THREE.BoxGeometry(L * u, H * u, W * u);
+        const geo = bmRoundedBox(L * u, H * u, W * u, BM_CORNER_ROUND * Math.min(L, W, H) * u);
         lidTopMaterial = faceMat(L, W, logoImage, logoFrac);
         const mesh = new THREE.Mesh(geo, [
             faceMat(H, W), faceMat(H, W),
@@ -1097,15 +1157,26 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
 
     scene.add(pivot);
 
-    // Enough fill that a dark box still shows its edges, with a key light to give
-    // the form somewhere to turn away from.
-    scene.add(new THREE.AmbientLight(0xffffff, 0.72));
-    const key = new THREE.DirectionalLight(0xffffff, 0.65);
-    key.position.set(2, 3, 2.5);
+    // Sits the box on a surface. Added to the scene rather than the pivot so it
+    // stays put on the ground while the box is turned above it.
+    const shadow = bmShadowPlane((L + gap) * u * 2.2, (W + gap) * u * 2.2);
+    shadow.position.y = -H * u / 2 - 0.004;
+    scene.add(shadow);
+    meshes.push(shadow);
+
+    // Soft studio lighting rather than a single hard key: board is matte, and a
+    // strong directional light makes it read as plastic.
+    // Ambient carried too much of the load at first and the faces came out at
+    // nearly the same brightness, which flattens the box. The key does the
+    // shaping; ambient and hemisphere only keep the shaded sides from going dead.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.40));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xc9d2e0, 0.34));
+    const key = new THREE.DirectionalLight(0xfff8f0, 0.92);
+    key.position.set(2.0, 3.6, 2.0);
     scene.add(key);
-    const rim = new THREE.DirectionalLight(0xffffff, 0.25);
-    rim.position.set(-2, 1, -2);
-    scene.add(rim);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.20);
+    fill.position.set(-2.4, 1.0, -1.8);
+    scene.add(fill);
 
     // Frame from the box's own bounding sphere rather than a fixed distance, so
     // a 15x4 rani haar box and a 2x2 ring box both fill the view instead of one
@@ -1113,10 +1184,12 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const sx = (L + gap) * u, sy = H * u, sz = (W + gap) * u;
     const radius = Math.sqrt(sx * sx + sy * sy + sz * sz) / 2;
     const fovRad = (camera.fov * Math.PI) / 180;
-    const dist = (radius / Math.sin(fovRad / 2)) * 1.08;
-    // Weighted upward: the lid is where the logo is, so the opening view should
-    // show it rather than make you drag before you can judge the print.
-    const dir = new THREE.Vector3(0.52, 0.82, 0.72).normalize();
+    const dist = (radius / Math.sin(fovRad / 2)) * 1.14;
+    // Weighted upward so the lid — where the logo is — faces the opening view,
+    // but not straight down: the reference product shots sit lower and show a
+    // good deal of the front wall, which is what makes the lid-over-base seam
+    // visible and reads as a physical box rather than a plan view.
+    const dir = new THREE.Vector3(0.56, 0.68, 0.80).normalize();
     camera.position.copy(dir.multiplyScalar(dist));
     camera.lookAt(0, 0, 0);
 
