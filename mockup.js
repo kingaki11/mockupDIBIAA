@@ -54,6 +54,40 @@ let bmExportMultiplier = 1;
 // recolour worked from, so the SVG cannot disagree with the picture on screen.
 let bmLastRender = null;
 let bmLogoSource = null;      // recoloured logo PNG, reused by the vector export
+let bm3dContext = null;       // geometry the live logo update needs
+
+// Where the logo currently sits on the lid, as fractions of that face.
+//
+// The offset is measured in inches, not pixels: the distance the logo has been
+// dragged from the centre of the die-line is converted through the template's
+// own pixels-per-inch, then expressed against the lid's real size. That way a
+// quarter-inch nudge on the flat mockup is a quarter-inch nudge on the box,
+// whatever resolution the template happens to be.
+function bm3dLogoFrac() {
+    const c = bm3dContext;
+    if (!c) return { w: 0.5, h: 0.25, x: 0, y: 0 };
+
+    const frac = {
+        w: Math.min(0.98, c.logoWIn / c.faceL),
+        h: Math.min(0.98, c.logoHIn / c.faceW),
+        x: 0,
+        y: 0,
+    };
+
+    if (bmLogoObject && c.ppi) {
+        const cx = bmLogoObject.left / c.scale;
+        const cy = bmLogoObject.top / c.scale;
+        const offX = (cx - c.centreX) / c.ppi / c.faceL;
+        const offY = (cy - c.centreY) / c.ppi / c.faceW;
+        // Kept on the lid: past this the logo would be drawn off the face and
+        // simply disappear, which reads as a bug rather than as a warning.
+        const limX = Math.max(0, (1 - frac.w) / 2);
+        const limY = Math.max(0, (1 - frac.h) / 2);
+        frac.x = Math.max(-limX, Math.min(limX, offX));
+        frac.y = Math.max(-limY, Math.min(limY, offY));
+    }
+    return frac;
+}
 
 function bmHex(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
@@ -592,6 +626,18 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
 
         if (!bmCanvas) {
             bmCanvas = new fabric.Canvas('bmCanvas', { preserveObjectStacking: true });
+            // Live link to the 3D preview. 'moving'/'scaling' fire continuously,
+            // so the repaint is throttled to a frame; 'modified' catches the
+            // final position once the pointer is released.
+            let queued = false;
+            const follow = function () {
+                if (queued) return;
+                queued = true;
+                requestAnimationFrame(function () { queued = false; bm3dSyncFromCanvas(); });
+            };
+            bmCanvas.on('object:moving', follow);
+            bmCanvas.on('object:scaling', follow);
+            bmCanvas.on('object:modified', bm3dSyncFromCanvas);
         }
         bmCanvas.clear();
         bmCanvas.setDimensions({ width: dispW, height: dispH });
@@ -661,20 +707,35 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         try {
             const lidL = tpl.length || 0;
             const lidW = tpl.width || 0;
+            const twoPiece = bmIsTopBottom(tpl.styleLabel);
+            const allow = twoPiece ? BM_LID_ALLOWANCE : 0;
             const logoWIn = wantLen;
             const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
-            const frac = (lidL > 0 && lidW > 0)
-                ? { w: Math.min(0.95, logoWIn / lidL), h: Math.min(0.95, logoHIn / lidW) }
-                : { w: 0.5, h: 0.25 };
+
+            // Everything the live position update needs, so dragging the logo does
+            // not have to re-derive the geometry.
+            bm3dContext = {
+                faceL: (lidL || 2) + allow,
+                faceW: (lidW || 2) + allow,
+                logoWIn: logoWIn,
+                logoHIn: logoHIn,
+                ppi: ppi,
+                scale: scale,
+                centreX: (region.left + region.right) / 2,
+                centreY: (region.top + region.bottom) / 2,
+            };
+
             bmRender3D(
                 { length: lidL || 2, width: lidW || 2, height: tpl.height || 1 },
                 colour,
                 logoImg,
-                frac
+                bm3dLogoFrac(),
+                { separateLid: twoPiece }
             );
             document.getElementById('bm3dMeta').textContent = (lidL && lidW)
                 ? lidL + '×' + lidW + '×' + (tpl.height || 0) + ' in · logo on the lid at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
+                  + (twoPiece ? ' · lid ' + BM_LID_ALLOWANCE + ' in oversize to clear the base' : '')
                 : 'This template has no size on it, so the proportions are approximate.';
         } catch (err) {
             // A 3D failure must not cost the user the mockup they just made.
@@ -917,7 +978,12 @@ function bm3dFaceTexture(hex, faceW, faceH, logoImage, logoFrac) {
     if (logoImage && logoFrac) {
         const lw = c.width * logoFrac.w;
         const lh = c.height * logoFrac.h;
-        ctx.drawImage(logoImage, (c.width - lw) / 2, (c.height - lh) / 2, lw, lh);
+        // x/y are offsets from the centre of the face, as a fraction of it, so
+        // moving the logo on the flat mockup moves it on the lid by the same
+        // real-world amount.
+        const cx = c.width * (0.5 + (logoFrac.x || 0)) - lw / 2;
+        const cy = c.height * (0.5 + (logoFrac.y || 0)) - lh / 2;
+        ctx.drawImage(logoImage, cx, cy, lw, lh);
     }
 
     const tex = new THREE.Texture(c);
@@ -930,10 +996,13 @@ function bm3dDispose() {
     if (!bm3d) return;
     cancelAnimationFrame(bm3d.frame);
     if (bm3d.observer) bm3d.observer.disconnect();
-    if (bm3d.mesh) {
-        bm3d.mesh.geometry.dispose();
-        bm3d.mesh.material.forEach(function (m) { if (m.map) m.map.dispose(); m.dispose(); });
-    }
+    (bm3d.meshes || []).forEach(function (m) {
+        m.geometry.dispose();
+        (Array.isArray(m.material) ? m.material : [m.material]).forEach(function (mat) {
+            if (mat.map) mat.map.dispose();
+            mat.dispose();
+        });
+    });
     bm3d.renderer.dispose();
     if (bm3d.renderer.domElement.parentNode) {
         bm3d.renderer.domElement.parentNode.removeChild(bm3d.renderer.domElement);
@@ -941,13 +1010,27 @@ function bm3dDispose() {
     bm3d = null;
 }
 
-function bmRender3D(dims, hex, logoImage, logoFrac) {
+// A TOP-BOTTOM box is two pieces, not one solid: a base, and a lid that slides
+// over it. The lid is cut slightly larger in both horizontal directions so it
+// clears the base walls — the standard allowance is a quarter inch — which is
+// why a real one has a visible lip and a seam partway down the side. Modelling
+// it as a single block hid exactly the detail the customer is looking at.
+const BM_LID_ALLOWANCE = 0.25;   // inches added to length and width
+const BM_LID_HEIGHT_FRACTION = 0.46;
+
+function bmIsTopBottom(styleLabel) {
+    const t = String(styleLabel || '').toUpperCase();
+    return t.indexOf('TOP') !== -1 && t.indexOf('BOTTOM') !== -1;
+}
+
+function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const stage = document.getElementById('bm3dStage');
     document.getElementById('bm3dPlaceholder').style.display = 'none';
     stage.style.display = 'block';
 
     bm3dDispose();
 
+    const options = opts || {};
     const width = Math.max(200, stage.clientWidth);
     const height = Math.max(260, Math.round(width * 0.92));
 
@@ -959,25 +1042,60 @@ function bmRender3D(dims, hex, logoImage, logoFrac) {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
 
-    // Normalise so any box fills a similar amount of frame — a 15x4 haar box and
-    // a 2x2 ring box should both be readable without hunting for the camera.
     const L = dims.length || 2, W = dims.width || 2, H = dims.height || 1;
-    const longest = Math.max(L, W, H);
-    const sx = L / longest, sy = H / longest, sz = W / longest;
+    const twoPiece = Boolean(options.separateLid);
+    const gap = twoPiece ? BM_LID_ALLOWANCE : 0;
 
-    const geo = new THREE.BoxGeometry(sx, sy, sz);
-    // three's box face order: +X, -X, +Y (top), -Y, +Z, -Z
-    const materials = [
-        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, H, W) }),
-        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, H, W) }),
-        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, W, logoImage, logoFrac) }),
-        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, W) }),
-        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, H) }),
-        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, H) }),
-    ];
+    // Normalise against the assembled box so any proportion fills a similar
+    // amount of frame — a 15x4 haar box and a 2x2 ring box alike.
+    const longest = Math.max(L + gap, W + gap, H);
+    const u = 1 / longest;
 
-    const mesh = new THREE.Mesh(geo, materials);
-    scene.add(mesh);
+    const pivot = new THREE.Group();
+    const meshes = [];
+    const faceMat = (fw, fh, img, frac) => new THREE.MeshLambertMaterial({
+        map: bm3dFaceTexture(hex, fw, fh, img, frac),
+    });
+
+    let lidTopMaterial = null;
+
+    if (twoPiece) {
+        const lidH = H * BM_LID_HEIGHT_FRACTION;
+        const baseH = H - lidH * 0.5;          // the lid overlaps the base's top
+
+        const baseGeo = new THREE.BoxGeometry(L * u, baseH * u, W * u);
+        const baseMesh = new THREE.Mesh(baseGeo, [
+            faceMat(baseH, W), faceMat(baseH, W),
+            faceMat(L, W), faceMat(L, W),
+            faceMat(L, baseH), faceMat(L, baseH),
+        ]);
+        baseMesh.position.y = (-H / 2 + baseH / 2) * u;
+        pivot.add(baseMesh);
+        meshes.push(baseMesh);
+
+        const lidGeo = new THREE.BoxGeometry((L + gap) * u, lidH * u, (W + gap) * u);
+        lidTopMaterial = faceMat(L + gap, W + gap, logoImage, logoFrac);
+        const lidMesh = new THREE.Mesh(lidGeo, [
+            faceMat(lidH, W + gap), faceMat(lidH, W + gap),
+            lidTopMaterial, faceMat(L + gap, W + gap),
+            faceMat(L + gap, lidH), faceMat(L + gap, lidH),
+        ]);
+        lidMesh.position.y = (H / 2 - lidH / 2) * u;
+        pivot.add(lidMesh);
+        meshes.push(lidMesh);
+    } else {
+        const geo = new THREE.BoxGeometry(L * u, H * u, W * u);
+        lidTopMaterial = faceMat(L, W, logoImage, logoFrac);
+        const mesh = new THREE.Mesh(geo, [
+            faceMat(H, W), faceMat(H, W),
+            lidTopMaterial, faceMat(L, W),
+            faceMat(L, H), faceMat(L, H),
+        ]);
+        pivot.add(mesh);
+        meshes.push(mesh);
+    }
+
+    scene.add(pivot);
 
     // Enough fill that a dark box still shows its edges, with a key light to give
     // the form somewhere to turn away from.
@@ -992,6 +1110,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac) {
     // Frame from the box's own bounding sphere rather than a fixed distance, so
     // a 15x4 rani haar box and a 2x2 ring box both fill the view instead of one
     // of them sitting lost in the middle of it.
+    const sx = (L + gap) * u, sy = H * u, sz = (W + gap) * u;
     const radius = Math.sqrt(sx * sx + sy * sy + sz * sz) / 2;
     const fovRad = (camera.fov * Math.PI) / 180;
     const dist = (radius / Math.sin(fovRad / 2)) * 1.08;
@@ -1001,8 +1120,8 @@ function bmRender3D(dims, hex, logoImage, logoFrac) {
     camera.position.copy(dir.multiplyScalar(dist));
     camera.lookAt(0, 0, 0);
 
-    mesh.rotation.x = 0;
-    mesh.rotation.y = -0.42;
+    pivot.rotation.x = 0;
+    pivot.rotation.y = -0.42;
 
     // Turn gently on its own until it is touched, then hand control over.
     let auto = true;
@@ -1020,9 +1139,9 @@ function bmRender3D(dims, hex, logoImage, logoFrac) {
     });
     el.addEventListener('pointermove', function (e) {
         if (!dragging) return;
-        mesh.rotation.y += (e.clientX - lastX) * 0.008;
+        pivot.rotation.y += (e.clientX - lastX) * 0.008;
         // Clamped so it cannot be tipped past vertical and lost.
-        mesh.rotation.x = Math.max(-1.2, Math.min(1.2, mesh.rotation.x + (e.clientY - lastY) * 0.008));
+        pivot.rotation.x = Math.max(-1.2, Math.min(1.2, pivot.rotation.x + (e.clientY - lastY) * 0.008));
         lastX = e.clientX; lastY = e.clientY;
     });
     const stop = function () { dragging = false; el.style.cursor = 'grab'; };
@@ -1030,12 +1149,11 @@ function bmRender3D(dims, hex, logoImage, logoFrac) {
     el.addEventListener('pointercancel', stop);
 
     function loop() {
-        if (auto) mesh.rotation.y += 0.004;
+        if (auto) pivot.rotation.y += 0.004;
         renderer.render(scene, camera);
         bm3d.frame = requestAnimationFrame(loop);
     }
 
-    // Keep it filling the column when the window changes.
     let observer = null;
     if (window.ResizeObserver) {
         observer = new ResizeObserver(function () {
@@ -1048,6 +1166,36 @@ function bmRender3D(dims, hex, logoImage, logoFrac) {
         observer.observe(stage);
     }
 
-    bm3d = { renderer, scene, camera, mesh, frame: 0, observer };
+    bm3d = {
+        renderer, scene, camera, pivot, meshes, frame: 0, observer,
+        lidTopMaterial,
+        lidFace: { w: L + gap, h: W + gap },
+        hex, logoImage,
+    };
     loop();
+}
+
+// Follows the logo while it is dragged or resized on the flat mockup. Scaling
+// changes the printed size as well as the position, so both are recomputed.
+function bm3dSyncFromCanvas() {
+    const c = bm3dContext;
+    if (!c || !bm3d || !bmLogoObject) return;
+    if (c.ppi) {
+        c.logoWIn = (bmLogoObject.width * bmLogoObject.scaleX) / c.scale / c.ppi;
+        c.logoHIn = (bmLogoObject.height * bmLogoObject.scaleY) / c.scale / c.ppi;
+    }
+    bm3dUpdateLogo(bm3dLogoFrac());
+}
+
+// Repaints just the lid so dragging the logo on the flat mockup shows up here
+// immediately. Rebuilding the scene for every pointer move would throw away the
+// angle the user had turned the box to.
+function bm3dUpdateLogo(logoFrac) {
+    if (!bm3d || !bm3d.lidTopMaterial) return;
+    const old = bm3d.lidTopMaterial.map;
+    bm3d.lidTopMaterial.map = bm3dFaceTexture(
+        bm3d.hex, bm3d.lidFace.w, bm3d.lidFace.h, bm3d.logoImage, logoFrac
+    );
+    bm3d.lidTopMaterial.needsUpdate = true;
+    if (old) old.dispose();
 }
