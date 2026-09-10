@@ -1016,11 +1016,11 @@ function bm3dDispose() {
 // why a real one has a visible lip and a seam partway down the side. Modelling
 // it as a single block hid exactly the detail the customer is looking at.
 const BM_LID_ALLOWANCE = 0.25;   // inches added to length and width
-// Measured off real top-bottom boxes: the lid is deep, covering roughly
-// three-quarters of the assembled height, with the base showing as a thin strip
-// at the bottom. At half and half it read as two stacked blocks rather than as a
-// lid on a box.
-const BM_LID_HEIGHT_FRACTION = 0.74;
+// How much of the assembled height the lid covers. Three-quarters, copied from
+// a deep-lidded sweet box, made the lid look like the whole box with a sliver of
+// base under it. Just over half seats it visibly on the base while still reading
+// as a lid rather than as two equal stacked trays.
+const BM_LID_HEIGHT_FRACTION = 0.54;
 // Board has a thickness and a crease; nothing folded from paper has a
 // mathematically sharp corner. Rounding by a small fraction of the shortest edge
 // is most of what separates a rendered box from a rendered cube.
@@ -1097,7 +1097,14 @@ function bmPanel(sizeX, sizeZ, material) {
 // positioned exactly on its fold line, so folding is a rotation of that group
 // rather than a morph between two shapes. That is what makes the open state a
 // true die-line — the flat layout is the same panels, just unfolded.
-function bmBuildTray(L, W, H, hex, logoImage, logoFrac) {
+// `dirSign` is +1 for a base, whose walls fold up, and -1 for a lid, whose walls
+// fold down. A lid is not a flipped base: its printed face is the outside, so it
+// lies print-up on the sheet and stays print-up on the box — the walls simply
+// crease the other way. Turning the whole lid over instead put the camera behind
+// its centre panel, and a double-sided plane seen from behind shows its texture
+// mirrored, which is why the logo read backwards.
+function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign) {
+    const dir = dirSign === -1 ? -1 : 1;
     const group = new THREE.Group();
     const mat = (fw, fh, img, frac) => new THREE.MeshLambertMaterial({
         map: bm3dFaceTexture(hex, fw, fh, img, frac),
@@ -1135,8 +1142,14 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac) {
         const wall = pair[0];
         [1, -1].forEach(function (zSign) {
             const earHinge = new THREE.Group();
-            earHinge.position.set(pair[1] * H / 2, 0, zSign * W / 2);
-            const ear = bmPanel(H, earDepth, mat(H, earDepth));
+            // Hinged a hair inside the end wall's fold line. Exactly on it the
+            // folded ear ends up coplanar with that wall and the two z-fight,
+            // which showed as a nick in the corner of the closed box.
+            earHinge.position.set(pair[1] * H / 2, 0, zSign * (W / 2 - W * 0.012));
+            // Slightly shorter than the wall it hangs from. At exactly the wall
+            // height the ear's own edge showed past the fold as a tab sticking
+            // out of the closed box.
+            const ear = bmPanel(H * 0.94, earDepth, mat(H, earDepth));
             ear.position.set(0, 0, zSign * earDepth / 2);
             earHinge.add(ear);
             wall.add(earHinge);
@@ -1145,7 +1158,7 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac) {
     });
 
     function setFold(t) {
-        const a = (Math.PI / 2) * t;
+        const a = (Math.PI / 2) * t * dir;
         hinges.forEach(function (h) {
             h.hinge.rotation.set(0, 0, 0);
             if (h.axis === 'z') h.hinge.rotation.z = h.sign * a;
@@ -1154,7 +1167,7 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac) {
         // Ears tuck in slightly behind the walls, so they trail the main fold.
         const et = Math.max(0, (t - 0.35) / 0.65);
         ears.forEach(function (e) {
-            e.hinge.rotation.x = -e.zSign * (Math.PI / 2) * et;
+            e.hinge.rotation.x = -e.zSign * (Math.PI / 2) * et * dir;
         });
     }
 
@@ -1196,14 +1209,14 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const trays = [];
 
     // Base tray. Its centre panel is the floor, so it sits at the bottom.
-    const base = bmBuildTray(L * u, W * u, baseH * u, hex, null, null);
+    const base = bmBuildTray(L * u, W * u, baseH * u, hex, null, null, 1);
     base.group.position.y = -H * u / 2;
     pivot.add(base.group);
     trays.push(base);
 
-    // Lid tray. Built the same way, then turned over and lowered onto the base —
-    // which is exactly how one goes on in life.
-    const lid = bmBuildTray((L + gap) * u, (W + gap) * u, lidH * u, hex, logoImage, logoFrac);
+    // Lid tray. Same construction, but its walls crease downward, so it only has
+    // to travel across and settle — no turning over.
+    const lid = bmBuildTray((L + gap) * u, (W + gap) * u, lidH * u, hex, logoImage, logoFrac, -1);
     pivot.add(lid.group);
     trays.push(lid);
 
@@ -1279,8 +1292,6 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         // travelling in a flat line put the lid through the base walls halfway.
         const arc = Math.sin(Math.PI * ease) * lidH * u * 1.15;
         lid.group.position.y = (H * u / 2) * ease + arc;
-        // Turning it over is the last thing that happens.
-        lid.group.rotation.x = Math.PI * ease;
 
         shadow.material.opacity = 0.25 + 0.75 * t;
         shadow.material.transparent = true;
