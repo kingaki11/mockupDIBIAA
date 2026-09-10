@@ -735,7 +735,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             document.getElementById('bm3dMeta').textContent = (lidL && lidW)
                 ? lidL + '×' + lidW + '×' + (tpl.height || 0) + ' in · logo on the lid at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
-                  + (twoPiece ? ' · lid ' + BM_LID_ALLOWANCE + ' in oversize to clear the base' : '')
+                  + (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : '')
                 : 'This template has no size on it, so the proportions are approximate.';
         } catch (err) {
             // A 3D failure must not cost the user the mockup they just made.
@@ -1016,11 +1016,14 @@ function bm3dDispose() {
 // why a real one has a visible lip and a seam partway down the side. Modelling
 // it as a single block hid exactly the detail the customer is looking at.
 const BM_LID_ALLOWANCE = 0.25;   // inches added to length and width
-// How much of the assembled height the lid covers. Three-quarters, copied from
-// a deep-lidded sweet box, made the lid look like the whole box with a sliver of
-// base under it. Just over half seats it visibly on the base while still reading
-// as a lid rather than as two equal stacked trays.
-const BM_LID_HEIGHT_FRACTION = 0.54;
+// The lid runs the full assembled height: it telescopes right down over the
+// base and covers it completely, so a closed box shows no seam, no step and no
+// strip of base along the bottom. Anything less left a visible joint partway
+// down the side, which is not what these boxes look like shut.
+const BM_LID_HEIGHT_FRACTION = 1;
+// The base is a touch shorter so it sits inside the lid rather than holding it
+// off the ground and reopening the gap the full-height lid exists to remove.
+const BM_BASE_HEIGHT_FRACTION = 0.94;
 // Board has a thickness and a crease; nothing folded from paper has a
 // mathematically sharp corner. Rounding by a small fraction of the shortest edge
 // is most of what separates a rendered box from a rendered cube.
@@ -1203,7 +1206,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const u = 1 / longest;
 
     const lidH = twoPiece ? H * BM_LID_HEIGHT_FRACTION : H;
-    const baseH = twoPiece ? H - lidH * 0.5 : H;
+    const baseH = twoPiece ? H * BM_BASE_HEIGHT_FRACTION : H;
 
     const pivot = new THREE.Group();
     const trays = [];
