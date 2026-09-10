@@ -1082,9 +1082,90 @@ function bmIsTopBottom(styleLabel) {
     return t.indexOf('TOP') !== -1 && t.indexOf('BOTTOM') !== -1;
 }
 
+// A flat panel lying in the XZ plane, printed side up. Every piece of the box is
+// one of these; folding is done by the group each one hangs from.
+function bmPanel(sizeX, sizeZ, material) {
+    const g = new THREE.PlaneGeometry(sizeX, sizeZ);
+    g.rotateX(-Math.PI / 2);
+    return new THREE.Mesh(g, material);
+}
+
+// Builds one tray — a base or a lid — as a centre panel with four walls on
+// hinges, plus the corner ears that hold a real tray together.
+//
+// The walls are not part of the centre panel's geometry: each hangs from a group
+// positioned exactly on its fold line, so folding is a rotation of that group
+// rather than a morph between two shapes. That is what makes the open state a
+// true die-line — the flat layout is the same panels, just unfolded.
+function bmBuildTray(L, W, H, hex, logoImage, logoFrac) {
+    const group = new THREE.Group();
+    const mat = (fw, fh, img, frac) => new THREE.MeshLambertMaterial({
+        map: bm3dFaceTexture(hex, fw, fh, img, frac),
+        side: THREE.DoubleSide,
+    });
+
+    const centreMaterial = mat(L, W, logoImage, logoFrac);
+    group.add(bmPanel(L, W, centreMaterial));
+
+    const hinges = [];
+    const ears = [];
+
+    // +X and -X walls fold about the Z axis; +Z and -Z about the X axis.
+    const makeWall = (pos, panelOffset, size, axis, sign) => {
+        const hinge = new THREE.Group();
+        hinge.position.set(pos[0], 0, pos[2]);
+        const panel = bmPanel(size[0], size[1], mat(size[0], size[1]));
+        panel.position.set(panelOffset[0], 0, panelOffset[2]);
+        hinge.add(panel);
+        group.add(hinge);
+        hinges.push({ hinge, axis, sign });
+        return hinge;
+    };
+
+    const right = makeWall([L / 2, 0, 0], [H / 2, 0, 0], [H, W], 'z', 1);
+    const left = makeWall([-L / 2, 0, 0], [-H / 2, 0, 0], [H, W], 'z', -1);
+    makeWall([0, 0, W / 2], [0, 0, H / 2], [L, H], 'x', -1);
+    makeWall([0, 0, -W / 2], [0, 0, -H / 2], [L, H], 'x', 1);
+
+    // Corner ears: hinged on the ends of the side walls, folding inward to sit
+    // against the end walls. They are children of the wall hinge, so they inherit
+    // the wall's fold and only add their own on top.
+    const earDepth = Math.min(H * 0.92, W * 0.30);
+    [[right, 1], [left, -1]].forEach(function (pair) {
+        const wall = pair[0];
+        [1, -1].forEach(function (zSign) {
+            const earHinge = new THREE.Group();
+            earHinge.position.set(pair[1] * H / 2, 0, zSign * W / 2);
+            const ear = bmPanel(H, earDepth, mat(H, earDepth));
+            ear.position.set(0, 0, zSign * earDepth / 2);
+            earHinge.add(ear);
+            wall.add(earHinge);
+            ears.push({ hinge: earHinge, zSign });
+        });
+    });
+
+    function setFold(t) {
+        const a = (Math.PI / 2) * t;
+        hinges.forEach(function (h) {
+            h.hinge.rotation.set(0, 0, 0);
+            if (h.axis === 'z') h.hinge.rotation.z = h.sign * a;
+            else h.hinge.rotation.x = h.sign * a;
+        });
+        // Ears tuck in slightly behind the walls, so they trail the main fold.
+        const et = Math.max(0, (t - 0.35) / 0.65);
+        ears.forEach(function (e) {
+            e.hinge.rotation.x = -e.zSign * (Math.PI / 2) * et;
+        });
+    }
+
+    setFold(0);
+    return { group, setFold, centreMaterial };
+}
+
 function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const stage = document.getElementById('bm3dStage');
     document.getElementById('bm3dPlaceholder').style.display = 'none';
+    document.getElementById('bm3dFoldRow').style.display = 'flex';
     stage.style.display = 'block';
 
     bm3dDispose();
@@ -1105,70 +1186,47 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const twoPiece = Boolean(options.separateLid);
     const gap = twoPiece ? BM_LID_ALLOWANCE : 0;
 
-    // Normalise against the assembled box so any proportion fills a similar
-    // amount of frame — a 15x4 haar box and a 2x2 ring box alike.
     const longest = Math.max(L + gap, W + gap, H);
     const u = 1 / longest;
 
+    const lidH = twoPiece ? H * BM_LID_HEIGHT_FRACTION : H;
+    const baseH = twoPiece ? H - lidH * 0.5 : H;
+
     const pivot = new THREE.Group();
-    const meshes = [];
-    const faceMat = (fw, fh, img, frac) => new THREE.MeshLambertMaterial({
-        map: bm3dFaceTexture(hex, fw, fh, img, frac),
-    });
+    const trays = [];
 
-    let lidTopMaterial = null;
+    // Base tray. Its centre panel is the floor, so it sits at the bottom.
+    const base = bmBuildTray(L * u, W * u, baseH * u, hex, null, null);
+    base.group.position.y = -H * u / 2;
+    pivot.add(base.group);
+    trays.push(base);
 
-    if (twoPiece) {
-        const lidH = H * BM_LID_HEIGHT_FRACTION;
-        const baseH = H - lidH * 0.5;          // the lid overlaps the base's top
-
-        const round = BM_CORNER_ROUND * Math.min(L, W, H) * u;
-        const baseGeo = bmRoundedBox(L * u, baseH * u, W * u, round);
-        const baseMesh = new THREE.Mesh(baseGeo, [
-            faceMat(baseH, W), faceMat(baseH, W),
-            faceMat(L, W), faceMat(L, W),
-            faceMat(L, baseH), faceMat(L, baseH),
-        ]);
-        baseMesh.position.y = (-H / 2 + baseH / 2) * u;
-        pivot.add(baseMesh);
-        meshes.push(baseMesh);
-
-        const lidGeo = bmRoundedBox((L + gap) * u, lidH * u, (W + gap) * u, round);
-        lidTopMaterial = faceMat(L + gap, W + gap, logoImage, logoFrac);
-        const lidMesh = new THREE.Mesh(lidGeo, [
-            faceMat(lidH, W + gap), faceMat(lidH, W + gap),
-            lidTopMaterial, faceMat(L + gap, W + gap),
-            faceMat(L + gap, lidH), faceMat(L + gap, lidH),
-        ]);
-        lidMesh.position.y = (H / 2 - lidH / 2) * u;
-        pivot.add(lidMesh);
-        meshes.push(lidMesh);
-    } else {
-        const geo = bmRoundedBox(L * u, H * u, W * u, BM_CORNER_ROUND * Math.min(L, W, H) * u);
-        lidTopMaterial = faceMat(L, W, logoImage, logoFrac);
-        const mesh = new THREE.Mesh(geo, [
-            faceMat(H, W), faceMat(H, W),
-            lidTopMaterial, faceMat(L, W),
-            faceMat(L, H), faceMat(L, H),
-        ]);
-        pivot.add(mesh);
-        meshes.push(mesh);
-    }
+    // Lid tray. Built the same way, then turned over and lowered onto the base —
+    // which is exactly how one goes on in life.
+    const lid = bmBuildTray((L + gap) * u, (W + gap) * u, lidH * u, hex, logoImage, logoFrac);
+    pivot.add(lid.group);
+    trays.push(lid);
 
     scene.add(pivot);
 
-    // Sits the box on a surface. Added to the scene rather than the pivot so it
-    // stays put on the ground while the box is turned above it.
+    // Where the lid rests when the box is open: beside the base, flat, the way
+    // two die-lines are laid out on a sheet.
+    //
+    // The gap has to clear the UNFOLDED footprint, not the box. A flat tray is
+    // its floor plus a wall on each side — for a 2x2x1.5 that is five inches
+    // across, not two — so an offset sized to the box left the two die-lines
+    // lying on top of each other.
+    const baseFlatX = (L + 2 * baseH) * u;
+    const lidFlatX = ((L + gap) + 2 * lidH) * u;
+    const baseFlatZ = (W + 2 * baseH) * u;
+    const lidFlatZ = ((W + gap) + 2 * lidH) * u;
+    const openOffsetX = ((baseFlatX + lidFlatX) / 2) * 1.06;
+    const openOffsetZ = ((baseFlatZ + lidFlatZ) / 2) * 0.22;
+
     const shadow = bmShadowPlane((L + gap) * u * 2.2, (W + gap) * u * 2.2);
     shadow.position.y = -H * u / 2 - 0.004;
     scene.add(shadow);
-    meshes.push(shadow);
 
-    // Soft studio lighting rather than a single hard key: board is matte, and a
-    // strong directional light makes it read as plastic.
-    // Ambient carried too much of the load at first and the faces came out at
-    // nearly the same brightness, which flattens the box. The key does the
-    // shaping; ambient and hemisphere only keep the shaded sides from going dead.
     scene.add(new THREE.AmbientLight(0xffffff, 0.40));
     scene.add(new THREE.HemisphereLight(0xffffff, 0xc9d2e0, 0.34));
     const key = new THREE.DirectionalLight(0xfff8f0, 0.92);
@@ -1178,25 +1236,57 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     fill.position.set(-2.4, 1.0, -1.8);
     scene.add(fill);
 
-    // Frame from the box's own bounding sphere rather than a fixed distance, so
-    // a 15x4 rani haar box and a 2x2 ring box both fill the view instead of one
-    // of them sitting lost in the middle of it.
-    const sx = (L + gap) * u, sy = H * u, sz = (W + gap) * u;
-    const radius = Math.sqrt(sx * sx + sy * sy + sz * sz) / 2;
+    // The camera pulls back as the box opens instead of being fixed at the
+    // widest extent. Framed for the open state alone, the closed box — which is
+    // what you look at most — sat small in the middle of the frame.
     const fovRad = (camera.fov * Math.PI) / 180;
-    const dist = (radius / Math.sin(fovRad / 2)) * 1.14;
-    // Weighted upward so the lid — where the logo is — faces the opening view,
-    // but not straight down: the reference product shots sit lower and show a
-    // good deal of the front wall, which is what makes the lid-over-base seam
-    // visible and reads as a physical box rather than a plan view.
+    const distanceFor = (r) => (r / Math.sin(fovRad / 2)) * 1.06;
+
+    const closedRadius = Math.sqrt(
+        Math.pow((L + gap) * u, 2) + Math.pow(H * u, 2) + Math.pow((W + gap) * u, 2)
+    ) / 2;
+    const openSpanX = openOffsetX + (baseFlatX + lidFlatX) / 2;
+    const openSpanZ = openOffsetZ + (baseFlatZ + lidFlatZ) / 2;
+    const openRadius = Math.sqrt(openSpanX * openSpanX + openSpanZ * openSpanZ) / 2;
+
+    const distClosed = distanceFor(closedRadius);
+    const distOpen = distanceFor(openRadius);
     const dir = new THREE.Vector3(0.56, 0.68, 0.80).normalize();
-    camera.position.copy(dir.multiplyScalar(dist));
-    camera.lookAt(0, 0, 0);
+    const placeCamera = (t) => {
+        const d = distOpen + (distClosed - distOpen) * t;
+        camera.position.copy(dir.clone().multiplyScalar(d));
+        camera.lookAt(0, 0, 0);
+    };
+    placeCamera(1);
 
     pivot.rotation.x = 0;
     pivot.rotation.y = -0.42;
 
-    // Turn gently on its own until it is touched, then hand control over.
+    // t: 0 flat on the sheet, 1 closed. The walls come up first and the lid only
+    // starts travelling once they are mostly there, so the two never intersect.
+    function setFold(t) {
+        const foldT = Math.min(1, t / 0.62);
+        const moveT = Math.max(0, Math.min(1, (t - 0.5) / 0.5));
+        // Ease so it settles rather than stopping dead.
+        const ease = moveT < 0.5 ? 2 * moveT * moveT : 1 - Math.pow(-2 * moveT + 2, 2) / 2;
+
+        base.setFold(foldT);
+        lid.setFold(foldT);
+
+        lid.group.position.x = openOffsetX * (1 - ease);
+        lid.group.position.z = openOffsetZ * (1 - ease);
+        // Lifted over the base on an arc rather than slid straight at it —
+        // travelling in a flat line put the lid through the base walls halfway.
+        const arc = Math.sin(Math.PI * ease) * lidH * u * 1.15;
+        lid.group.position.y = (H * u / 2) * ease + arc;
+        // Turning it over is the last thing that happens.
+        lid.group.rotation.x = Math.PI * ease;
+
+        shadow.material.opacity = 0.25 + 0.75 * t;
+        shadow.material.transparent = true;
+        placeCamera(t);
+    }
+
     let auto = true;
     let dragging = false;
     let lastX = 0, lastY = 0;
@@ -1213,7 +1303,6 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     el.addEventListener('pointermove', function (e) {
         if (!dragging) return;
         pivot.rotation.y += (e.clientX - lastX) * 0.008;
-        // Clamped so it cannot be tipped past vertical and lost.
         pivot.rotation.x = Math.max(-1.2, Math.min(1.2, pivot.rotation.x + (e.clientY - lastY) * 0.008));
         lastX = e.clientX; lastY = e.clientY;
     });
@@ -1239,17 +1328,33 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         observer.observe(stage);
     }
 
+    const meshes = [];
+    scene.traverse(function (o) { if (o.isMesh) meshes.push(o); });
+
     bm3d = {
         renderer, scene, camera, pivot, meshes, frame: 0, observer,
-        lidTopMaterial,
+        setFold,
+        lidTopMaterial: lid.centreMaterial,
         lidFace: { w: L + gap, h: W + gap },
         hex, logoImage,
     };
+
+    setFold(bm3dFoldValue());
     loop();
 }
 
-// Follows the logo while it is dragged or resized on the flat mockup. Scaling
-// changes the printed size as well as the position, so both are recomputed.
+// Reads the open/close slider. Closed by default: that is the product, and the
+// fold is something you go looking for.
+function bm3dFoldValue() {
+    const el = document.getElementById('bm3dFold');
+    const v = el ? parseFloat(el.value) : 1;
+    return Number.isFinite(v) ? v : 1;
+}
+
+document.getElementById('bm3dFold').addEventListener('input', function () {
+    if (bm3d && bm3d.setFold) bm3d.setFold(bm3dFoldValue());
+});
+
 function bm3dSyncFromCanvas() {
     const c = bm3dContext;
     if (!c || !bm3d || !bmLogoObject) return;
