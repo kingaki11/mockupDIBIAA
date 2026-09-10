@@ -1106,16 +1106,24 @@ function bmPanel(sizeX, sizeZ, material) {
 // crease the other way. Turning the whole lid over instead put the camera behind
 // its centre panel, and a double-sided plane seen from behind shows its texture
 // mirrored, which is why the logo read backwards.
-function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign) {
+// `floor` optionally widens just the centre panel beyond the walls. The base
+// needs that: its walls are cut narrower so the lid can slide over them, which
+// leaves a ring of daylight between the two at the bottom rim — real board
+// closes that with its own thickness, but a zero-thickness plane cannot, so you
+// could see straight into the box whenever it was tilted. Widening the floor to
+// the lid's own footprint seals the underside without moving any wall.
+function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign, floor) {
     const dir = dirSign === -1 ? -1 : 1;
+    const floorL = (floor && floor.L) || L;
+    const floorW = (floor && floor.W) || W;
     const group = new THREE.Group();
     const mat = (fw, fh, img, frac) => new THREE.MeshLambertMaterial({
         map: bm3dFaceTexture(hex, fw, fh, img, frac),
         side: THREE.DoubleSide,
     });
 
-    const centreMaterial = mat(L, W, logoImage, logoFrac);
-    group.add(bmPanel(L, W, centreMaterial));
+    const centreMaterial = mat(floorL, floorW, logoImage, logoFrac);
+    group.add(bmPanel(floorL, floorW, centreMaterial));
 
     const hinges = [];
     const ears = [];
@@ -1212,7 +1220,9 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const trays = [];
 
     // Base tray. Its centre panel is the floor, so it sits at the bottom.
-    const base = bmBuildTray(L * u, W * u, baseH * u, hex, null, null, 1);
+    const base = bmBuildTray(L * u, W * u, baseH * u, hex, null, null, 1, {
+        L: (L + gap) * u, W: (W + gap) * u,
+    });
     base.group.position.y = -H * u / 2;
     pivot.add(base.group);
     trays.push(base);
