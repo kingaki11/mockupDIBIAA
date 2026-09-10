@@ -655,6 +655,34 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         document.getElementById('bmMeta').textContent =
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName
             + ' · ' + sizeNote + ' · drag or resize the logo to adjust';
+
+        // Fold the same box in 3D. The logo is sized as a fraction of the lid so
+        // it stays true to the inches entered, not to the die-line's pixels.
+        try {
+            const lidL = tpl.length || 0;
+            const lidW = tpl.width || 0;
+            const logoWIn = wantLen;
+            const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
+            const frac = (lidL > 0 && lidW > 0)
+                ? { w: Math.min(0.95, logoWIn / lidL), h: Math.min(0.95, logoHIn / lidW) }
+                : { w: 0.5, h: 0.25 };
+            bmRender3D(
+                { length: lidL || 2, width: lidW || 2, height: tpl.height || 1 },
+                colour,
+                logoImg,
+                frac
+            );
+            document.getElementById('bm3dMeta').textContent = (lidL && lidW)
+                ? lidL + '×' + lidW + '×' + (tpl.height || 0) + ' in · logo on the lid at '
+                  + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
+                : 'This template has no size on it, so the proportions are approximate.';
+        } catch (err) {
+            // A 3D failure must not cost the user the mockup they just made.
+            console.warn('3D preview unavailable:', err);
+            document.getElementById('bm3dStage').style.display = 'none';
+            document.getElementById('bm3dPlaceholder').style.display = 'flex';
+            document.getElementById('bm3dMeta').textContent = '3D preview unavailable in this browser.';
+        }
         showAdminMsg(msg, 'Done — drag the logo if it needs nudging, then download.', false);
     } catch (err) {
         showAdminMsg(msg, err.message, true);
@@ -862,3 +890,164 @@ document.getElementById('bmTplUpload').addEventListener('click', async function 
 });
 
 bmPopulateColours();
+
+// ── 3D preview ───────────────────────────────────────────────────────────────
+//
+// A folded view of the same box the flat die-line describes: its real length,
+// width and height, its colour, and the logo on the lid at the size that was
+// asked for. Built with three.js because a lit, perspective solid reads as a box
+// in a way a CSS-transformed cube does not, and it can be turned to check the
+// logo from another angle.
+
+let bm3d = null;   // { renderer, scene, camera, mesh, frame, observer }
+
+// Paints one face. The lid also carries the logo, sized as a fraction of the
+// face rather than in pixels, so it stays true to the inches that were entered
+// whatever texture resolution is used.
+function bm3dFaceTexture(hex, faceW, faceH, logoImage, logoFrac) {
+    const LONG = 1024;
+    const ratio = faceH / faceW;
+    const c = document.createElement('canvas');
+    c.width = LONG;
+    c.height = Math.max(8, Math.round(LONG * ratio));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = hex;
+    ctx.fillRect(0, 0, c.width, c.height);
+
+    if (logoImage && logoFrac) {
+        const lw = c.width * logoFrac.w;
+        const lh = c.height * logoFrac.h;
+        ctx.drawImage(logoImage, (c.width - lw) / 2, (c.height - lh) / 2, lw, lh);
+    }
+
+    const tex = new THREE.Texture(c);
+    tex.needsUpdate = true;
+    tex.anisotropy = 4;
+    return tex;
+}
+
+function bm3dDispose() {
+    if (!bm3d) return;
+    cancelAnimationFrame(bm3d.frame);
+    if (bm3d.observer) bm3d.observer.disconnect();
+    if (bm3d.mesh) {
+        bm3d.mesh.geometry.dispose();
+        bm3d.mesh.material.forEach(function (m) { if (m.map) m.map.dispose(); m.dispose(); });
+    }
+    bm3d.renderer.dispose();
+    if (bm3d.renderer.domElement.parentNode) {
+        bm3d.renderer.domElement.parentNode.removeChild(bm3d.renderer.domElement);
+    }
+    bm3d = null;
+}
+
+function bmRender3D(dims, hex, logoImage, logoFrac) {
+    const stage = document.getElementById('bm3dStage');
+    document.getElementById('bm3dPlaceholder').style.display = 'none';
+    stage.style.display = 'block';
+
+    bm3dDispose();
+
+    const width = Math.max(200, stage.clientWidth);
+    const height = Math.max(260, Math.round(width * 0.92));
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(width, height);
+    stage.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
+
+    // Normalise so any box fills a similar amount of frame — a 15x4 haar box and
+    // a 2x2 ring box should both be readable without hunting for the camera.
+    const L = dims.length || 2, W = dims.width || 2, H = dims.height || 1;
+    const longest = Math.max(L, W, H);
+    const sx = L / longest, sy = H / longest, sz = W / longest;
+
+    const geo = new THREE.BoxGeometry(sx, sy, sz);
+    // three's box face order: +X, -X, +Y (top), -Y, +Z, -Z
+    const materials = [
+        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, H, W) }),
+        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, H, W) }),
+        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, W, logoImage, logoFrac) }),
+        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, W) }),
+        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, H) }),
+        new THREE.MeshLambertMaterial({ map: bm3dFaceTexture(hex, L, H) }),
+    ];
+
+    const mesh = new THREE.Mesh(geo, materials);
+    scene.add(mesh);
+
+    // Enough fill that a dark box still shows its edges, with a key light to give
+    // the form somewhere to turn away from.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.72));
+    const key = new THREE.DirectionalLight(0xffffff, 0.65);
+    key.position.set(2, 3, 2.5);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+    rim.position.set(-2, 1, -2);
+    scene.add(rim);
+
+    // Frame from the box's own bounding sphere rather than a fixed distance, so
+    // a 15x4 rani haar box and a 2x2 ring box both fill the view instead of one
+    // of them sitting lost in the middle of it.
+    const radius = Math.sqrt(sx * sx + sy * sy + sz * sz) / 2;
+    const fovRad = (camera.fov * Math.PI) / 180;
+    const dist = (radius / Math.sin(fovRad / 2)) * 1.08;
+    // Weighted upward: the lid is where the logo is, so the opening view should
+    // show it rather than make you drag before you can judge the print.
+    const dir = new THREE.Vector3(0.52, 0.82, 0.72).normalize();
+    camera.position.copy(dir.multiplyScalar(dist));
+    camera.lookAt(0, 0, 0);
+
+    mesh.rotation.x = 0;
+    mesh.rotation.y = -0.42;
+
+    // Turn gently on its own until it is touched, then hand control over.
+    let auto = true;
+    let dragging = false;
+    let lastX = 0, lastY = 0;
+    const el = renderer.domElement;
+    el.style.touchAction = 'none';
+    el.style.cursor = 'grab';
+
+    el.addEventListener('pointerdown', function (e) {
+        dragging = true; auto = false;
+        lastX = e.clientX; lastY = e.clientY;
+        el.style.cursor = 'grabbing';
+        el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener('pointermove', function (e) {
+        if (!dragging) return;
+        mesh.rotation.y += (e.clientX - lastX) * 0.008;
+        // Clamped so it cannot be tipped past vertical and lost.
+        mesh.rotation.x = Math.max(-1.2, Math.min(1.2, mesh.rotation.x + (e.clientY - lastY) * 0.008));
+        lastX = e.clientX; lastY = e.clientY;
+    });
+    const stop = function () { dragging = false; el.style.cursor = 'grab'; };
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointercancel', stop);
+
+    function loop() {
+        if (auto) mesh.rotation.y += 0.004;
+        renderer.render(scene, camera);
+        bm3d.frame = requestAnimationFrame(loop);
+    }
+
+    // Keep it filling the column when the window changes.
+    let observer = null;
+    if (window.ResizeObserver) {
+        observer = new ResizeObserver(function () {
+            const w = Math.max(200, stage.clientWidth);
+            const h = Math.max(260, Math.round(w * 0.92));
+            renderer.setSize(w, h);
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+        });
+        observer.observe(stage);
+    }
+
+    bm3d = { renderer, scene, camera, mesh, frame: 0, observer };
+    loop();
+}

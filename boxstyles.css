@@ -1370,15 +1370,15 @@ h2 {
 /* ── Mockup tab ───────────────────────────────────────────────────────────── */
 
 #boxMockupPanel {
-    max-width: 1240px;
+    max-width: 1660px;
 }
 
-/* Controls beside the preview once there is room. A single column pushed the
-   mockup below the fold on a wide screen, so you could not see the effect of a
-   colour change without scrolling. */
+/* Details, flat mockup, folded box — left to right, in the order you work. A
+   single column pushed the previews below the fold, so a colour change could not
+   be judged without scrolling. */
 .bm-layout {
     display: grid;
-    grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr) minmax(0, 1fr);
     gap: 20px;
     align-items: start;
 }
@@ -1650,14 +1650,45 @@ h2 {
 .bm-canvas-wrap .canvas-container { max-width: 100% !important; }
 .bm-canvas-wrap canvas { max-width: 100% !important; }
 
+/* The folded box */
+
+.bm-3d-stage {
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    /* A soft ground rather than the transparency checker: the box is a solid
+       object and reads better against something that looks like a surface. */
+    background: radial-gradient(120% 90% at 50% 15%, #ffffff 0%, #eef1f6 55%, #dfe4ec 100%);
+    overflow: hidden;
+    line-height: 0;
+}
+
+.bm-3d-stage canvas { display: block; width: 100% !important; height: auto !important; }
+
+.bm-card-note {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin-left: 8px;
+}
+
 /* ── Mockup: responsive ── */
 
-@media (max-width: 1240px) {
+@media (max-width: 1660px) {
     #boxMockupPanel { max-width: 100%; }
+}
+
+/* Two columns: details on the left, both previews stacked on the right. Without
+   the row span the folded box would wrap back under the details instead. */
+@media (min-width: 1001px) and (max-width: 1320px) {
+    .bm-layout { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); }
+    .bm-controls { grid-row: span 2; }
 }
 
 @media (max-width: 1000px) {
     .bm-layout { grid-template-columns: 1fr; }
+    .bm-controls { grid-row: auto; }
     .bm-preview-col { position: static; }
 }
 
