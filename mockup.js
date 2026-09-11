@@ -1343,7 +1343,10 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     ) / 2;
     const openSpanX = openOffsetX + (baseFlatX + lidFlatX) / 2;
     const openSpanZ = openOffsetZ + (baseFlatZ + lidFlatZ) / 2;
-    const openRadius = Math.sqrt(openSpanX * openSpanX + openSpanZ * openSpanZ) / 2;
+    // The lid now rises well above the base before dropping, so the vertical
+    // extent has to count toward the framing or it leaves the top of the view.
+    const openSpanY = (H * u / 2) + lidH * u * 2.0;
+    const openRadius = Math.sqrt(openSpanX * openSpanX + openSpanY * openSpanY + openSpanZ * openSpanZ) / 2;
 
     const distClosed = distanceFor(closedRadius);
     const distOpen = distanceFor(openRadius);
@@ -1360,21 +1363,29 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
 
     // t: 0 flat on the sheet, 1 closed. The walls come up first and the lid only
     // starts travelling once they are mostly there, so the two never intersect.
+    // A lid goes on from directly above, not in from the side. So the travel is
+    // two distinct moves rather than one diagonal: the lid lifts and comes across
+    // until it is squarely over the base, and only then drops straight down onto
+    // it. Sliding it along one path looked like the lid was being posted in
+    // sideways, which is not how the box shuts.
+    const easeInOut = (v) => (v < 0.5 ? 2 * v * v : 1 - Math.pow(-2 * v + 2, 2) / 2);
+    const hoverY = (H * u / 2) + lidH * u * 0.95;   // clear of the base walls
+    const TRAVEL_PART = 0.6;                        // of the move, before the drop
+
     function setFold(t) {
         const foldT = Math.min(1, t / 0.62);
         const moveT = Math.max(0, Math.min(1, (t - 0.5) / 0.5));
-        // Ease so it settles rather than stopping dead.
-        const ease = moveT < 0.5 ? 2 * moveT * moveT : 1 - Math.pow(-2 * moveT + 2, 2) / 2;
+        const travel = easeInOut(Math.min(1, moveT / TRAVEL_PART));
+        const descend = easeInOut(Math.max(0, (moveT - TRAVEL_PART) / (1 - TRAVEL_PART)));
 
         base.setFold(foldT);
         lid.setFold(foldT);
 
-        lid.group.position.x = openOffsetX * (1 - ease);
-        lid.group.position.z = openOffsetZ * (1 - ease);
-        // Lifted over the base on an arc rather than slid straight at it —
-        // travelling in a flat line put the lid through the base walls halfway.
-        const arc = Math.sin(Math.PI * ease) * lidH * u * 1.15;
-        lid.group.position.y = (H * u / 2) * ease + arc;
+        // Across first — finished before the drop begins.
+        lid.group.position.x = openOffsetX * (1 - travel);
+        lid.group.position.z = openOffsetZ * (1 - travel);
+        // Then straight down, from the hover height to seated.
+        lid.group.position.y = (1 - descend) * (hoverY * travel) + descend * (H * u / 2);
 
         shadow.material.opacity = 0.25 + 0.75 * t;
         shadow.material.transparent = true;
