@@ -56,39 +56,6 @@ let bmLastRender = null;
 let bmLogoSource = null;      // recoloured logo PNG, reused by the vector export
 let bm3dContext = null;       // geometry the live logo update needs
 
-// Where the logo currently sits on the lid, as fractions of that face.
-//
-// The offset is measured in inches, not pixels: the distance the logo has been
-// dragged from the centre of the die-line is converted through the template's
-// own pixels-per-inch, then expressed against the lid's real size. That way a
-// quarter-inch nudge on the flat mockup is a quarter-inch nudge on the box,
-// whatever resolution the template happens to be.
-function bm3dLogoFrac() {
-    const c = bm3dContext;
-    if (!c) return { w: 0.5, h: 0.25, x: 0, y: 0 };
-
-    const frac = {
-        w: Math.min(0.98, c.logoWIn / c.faceL),
-        h: Math.min(0.98, c.logoHIn / c.faceW),
-        x: 0,
-        y: 0,
-    };
-
-    if (bmLogoObject && c.ppi) {
-        const cx = bmLogoObject.left / c.scale;
-        const cy = bmLogoObject.top / c.scale;
-        const offX = (cx - c.centreX) / c.ppi / c.faceL;
-        const offY = (cy - c.centreY) / c.ppi / c.faceW;
-        // Kept on the lid: past this the logo would be drawn off the face and
-        // simply disappear, which reads as a bug rather than as a warning.
-        const limX = Math.max(0, (1 - frac.w) / 2);
-        const limY = Math.max(0, (1 - frac.h) / 2);
-        frac.x = Math.max(-limX, Math.min(limX, offX));
-        frac.y = Math.max(-limY, Math.min(limY, offY));
-    }
-    return frac;
-}
-
 function bmHex(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
     if (!m) return [0, 0, 0];
@@ -344,6 +311,28 @@ function bmRecolour(sourceCanvas, hex, region) {
     let panel = new Uint8Array(total);
     for (let p = 0; p < total; p++) if (label[p] && sizes[label[p]] >= minArea) panel[p] = 1;
 
+    // Measure each panel that survived. Which one the logo is sitting on decides
+    // which face of the folded box it belongs to, so the die-line's own layout
+    // has to be readable, not just its total ink.
+    const boxes = new Map();
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            const id = label[p];
+            if (!id || sizes[id] < minArea) continue;
+            let b = boxes.get(id);
+            if (!b) { b = { id, minX: x, maxX: x, minY: y, maxY: y, area: sizes[id] }; boxes.set(id, b); }
+            if (x < b.minX) b.minX = x;
+            if (x > b.maxX) b.maxX = x;
+            if (y < b.minY) b.minY = y;
+            if (y > b.maxY) b.maxY = y;
+        }
+    }
+    const panelBoxes = [...boxes.values()].map(function (b) {
+        return { ...b, cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2,
+                 width: b.maxX - b.minX + 1, height: b.maxY - b.minY + 1 };
+    });
+
     // Grow over the cut lines so a panel edge is drawn on the box colour rather
     // than left stranded on the transparent sheet.
     for (let step = 0; step < BM_EDGE_GROW; step++) {
@@ -394,6 +383,7 @@ function bmRecolour(sourceCanvas, hex, region) {
 
     return {
         canvas: sourceCanvas,
+        panelBoxes,
         panelMask: layerCanvas((p) => panel[p]),
         inkMask: layerCanvas((p) => lum[p] <= BM_WHITE),
         ink: '#' + ink.map((n) => n.toString(16).padStart(2, '0')).join(''),
@@ -783,27 +773,28 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
 
             // Everything the live position update needs, so dragging the logo does
-            // not have to re-derive the geometry.
+            // not have to re-derive the geometry. The panel map is the important
+            // part: it is what lets a logo dragged onto a side wing appear on
+            // that wall rather than being pinned to the lid.
             bm3dContext = {
-                faceL: (lidL || 2) + allow,
-                faceW: (lidW || 2) + allow,
-                logoWIn: logoWIn,
-                logoHIn: logoHIn,
-                ppi: ppi,
                 scale: scale,
-                centreX: (region.left + region.right) / 2,
-                centreY: (region.top + region.bottom) / 2,
+                faces: bmClassifyFaces(layers.panelBoxes),
             };
 
+            const placement = bm3dLogoPlacement();
             bmRender3D(
                 { length: lidL || 2, width: lidW || 2, height: tpl.height || 1 },
                 colour,
                 logoImg,
-                bm3dLogoFrac(),
+                placement,
                 { separateLid: twoPiece }
             );
+            const faceName = {
+                top: 'the lid', left: 'the left wall', right: 'the right wall',
+                front: 'the front wall', back: 'the back wall',
+            }[placement.face] || 'the lid';
             document.getElementById('bm3dMeta').textContent = (lidL && lidW)
-                ? lidL + '×' + lidW + '×' + (tpl.height || 0) + ' in · logo on the lid at '
+                ? lidL + '×' + lidW + '×' + (tpl.height || 0) + ' in · logo on ' + faceName + ' at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
                   + (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : '')
                 : 'This template has no size on it, so the proportions are approximate.';
@@ -1155,6 +1146,83 @@ function bmIsTopBottom(styleLabel) {
     return t.indexOf('TOP') !== -1 && t.indexOf('BOTTOM') !== -1;
 }
 
+// Works out which panel of the die-line is which face of the folded box.
+//
+// The largest panel is the one the lid is printed on. The others are read off
+// its edges: a panel sitting to its left, overlapping it vertically, folds up as
+// the left wall, and so on. That is the whole reason this exists — a logo
+// dragged onto a side wing has to appear on that wall in 3D, not be clamped back
+// onto the lid because the lid is the only face we bothered to map.
+function bmClassifyFaces(panelBoxes) {
+    if (!panelBoxes || !panelBoxes.length) return null;
+    const sorted = [...panelBoxes].sort(function (a, b) { return b.area - a.area; });
+    const main = sorted[0];
+    const faces = { top: main, left: null, right: null, front: null, back: null };
+
+    const overlaps = (a1, a2, b1, b2) => Math.min(a2, b2) - Math.max(a1, b1) > 0;
+
+    sorted.slice(1).forEach(function (b) {
+        const dx = b.cx - main.cx;
+        const dy = b.cy - main.cy;
+        if (Math.abs(dx) > Math.abs(dy)) {
+            // Must share rows with the lid, or a corner ear would be mistaken
+            // for a wall.
+            if (!overlaps(b.minY, b.maxY, main.minY, main.maxY)) return;
+            const key = dx < 0 ? 'left' : 'right';
+            if (!faces[key] || Math.abs(b.cx - main.cx) < Math.abs(faces[key].cx - main.cx)) faces[key] = b;
+        } else {
+            if (!overlaps(b.minX, b.maxX, main.minX, main.maxX)) return;
+            const key = dy < 0 ? 'back' : 'front';
+            if (!faces[key] || Math.abs(b.cy - main.cy) < Math.abs(faces[key].cy - main.cy)) faces[key] = b;
+        }
+    });
+    return faces;
+}
+
+// Which face the logo is on, and where within it.
+//
+// Position and size are expressed against the panel's own box rather than
+// converted through inches, because that panel IS the face — mapping one
+// rectangle onto the other keeps the logo exactly where it was put, at the size
+// it was drawn.
+function bm3dLogoPlacement() {
+    const c = bm3dContext;
+    const fallback = { face: 'top', w: 0.5, h: 0.25, x: 0, y: 0 };
+    if (!c || !c.faces || !bmLogoObject) return fallback;
+
+    const cx = bmLogoObject.left / c.scale;
+    const cy = bmLogoObject.top / c.scale;
+    const lw = (bmLogoObject.width * bmLogoObject.scaleX) / c.scale;
+    const lh = (bmLogoObject.height * bmLogoObject.scaleY) / c.scale;
+
+    const entries = Object.keys(c.faces)
+        .filter(function (k) { return c.faces[k]; })
+        .map(function (k) { return { key: k, box: c.faces[k] }; });
+    if (!entries.length) return fallback;
+
+    // Prefer the panel the logo actually sits inside; otherwise the nearest, so
+    // a logo over a fold line or an ear still lands somewhere sensible.
+    let chosen = entries.find(function (e) {
+        return cx >= e.box.minX && cx <= e.box.maxX && cy >= e.box.minY && cy <= e.box.maxY;
+    });
+    if (!chosen) {
+        let best = Infinity;
+        entries.forEach(function (e) {
+            const d = Math.pow(cx - e.box.cx, 2) + Math.pow(cy - e.box.cy, 2);
+            if (d < best) { best = d; chosen = e; }
+        });
+    }
+
+    const b = chosen.box;
+    return {
+        face: chosen.key,
+        w: Math.min(0.98, lw / b.width),
+        h: Math.min(0.98, lh / b.height),
+        x: Math.max(-0.5, Math.min(0.5, (cx - b.cx) / b.width)),
+        y: Math.max(-0.5, Math.min(0.5, (cy - b.cy) / b.height)),
+    };
+}
+
 // A flat panel lying in the XZ plane, printed side up. Every piece of the box is
 // one of these; folding is done by the group each one hangs from.
 function bmPanel(sizeX, sizeZ, material) {
@@ -1192,17 +1260,25 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign, floor) {
         side: THREE.DoubleSide,
     });
 
-    const centreMaterial = mat(floorL, floorW, logoImage, logoFrac);
+    // Every face keeps a handle on its material and its real size, so the logo
+    // can be repainted onto whichever one it has been dragged to.
+    const faceInfo = {};
+    const onFace = (key) => (logoFrac && logoFrac.face === key ? logoFrac : null);
+
+    const centreMaterial = mat(floorL, floorW, logoImage, onFace('top'));
+    faceInfo.top = { material: centreMaterial, w: floorL, h: floorW };
     group.add(bmPanel(floorL, floorW, centreMaterial));
 
     const hinges = [];
     const ears = [];
 
     // +X and -X walls fold about the Z axis; +Z and -Z about the X axis.
-    const makeWall = (pos, panelOffset, size, axis, sign) => {
+    const makeWall = (key, pos, panelOffset, size, axis, sign) => {
         const hinge = new THREE.Group();
         hinge.position.set(pos[0], 0, pos[2]);
-        const panel = bmPanel(size[0], size[1], mat(size[0], size[1]));
+        const material = mat(size[0], size[1], logoImage, onFace(key));
+        faceInfo[key] = { material, w: size[0], h: size[1] };
+        const panel = bmPanel(size[0], size[1], material);
         panel.position.set(panelOffset[0], 0, panelOffset[2]);
         hinge.add(panel);
         group.add(hinge);
@@ -1210,10 +1286,10 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign, floor) {
         return hinge;
     };
 
-    const right = makeWall([L / 2, 0, 0], [H / 2, 0, 0], [H, W], 'z', 1);
-    const left = makeWall([-L / 2, 0, 0], [-H / 2, 0, 0], [H, W], 'z', -1);
-    makeWall([0, 0, W / 2], [0, 0, H / 2], [L, H], 'x', -1);
-    makeWall([0, 0, -W / 2], [0, 0, -H / 2], [L, H], 'x', 1);
+    const right = makeWall('right', [L / 2, 0, 0], [H / 2, 0, 0], [H, W], 'z', 1);
+    const left = makeWall('left', [-L / 2, 0, 0], [-H / 2, 0, 0], [H, W], 'z', -1);
+    makeWall('front', [0, 0, W / 2], [0, 0, H / 2], [L, H], 'x', -1);
+    makeWall('back', [0, 0, -W / 2], [0, 0, -H / 2], [L, H], 'x', 1);
 
     // Corner ears: hinged on the ends of the side walls, folding inward to sit
     // against the end walls. They are children of the wall hinge, so they inherit
@@ -1253,7 +1329,7 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign, floor) {
     }
 
     setFold(0);
-    return { group, setFold, centreMaterial };
+    return { group, setFold, centreMaterial, faceInfo };
 }
 
 function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
@@ -1436,11 +1512,17 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const meshes = [];
     scene.traverse(function (o) { if (o.isMesh) meshes.push(o); });
 
+    // Faces belong to the lid: that is the piece the print goes on, and the base
+    // is hidden once the box is shut.
+    const faceInfo = lid.faceInfo;
+    Object.keys(faceInfo).forEach(function (k) {
+        faceInfo[k].hasLogo = Boolean(logoFrac && logoFrac.face === k);
+    });
+
     bm3d = {
         renderer, scene, camera, pivot, meshes, frame: 0, observer,
         setFold,
-        lidTopMaterial: lid.centreMaterial,
-        lidFace: { w: L + gap, h: W + gap },
+        faceInfo,
         hex, logoImage,
     };
 
@@ -1461,24 +1543,39 @@ document.getElementById('bm3dFold').addEventListener('input', function () {
 });
 
 function bm3dSyncFromCanvas() {
-    const c = bm3dContext;
-    if (!c || !bm3d || !bmLogoObject) return;
-    if (c.ppi) {
-        c.logoWIn = (bmLogoObject.width * bmLogoObject.scaleX) / c.scale / c.ppi;
-        c.logoHIn = (bmLogoObject.height * bmLogoObject.scaleY) / c.scale / c.ppi;
-    }
-    bm3dUpdateLogo(bm3dLogoFrac());
+    if (!bm3dContext || !bm3d || !bmLogoObject) return;
+    const placement = bm3dLogoPlacement();
+    bm3dUpdateLogo(placement);
+
+    // Say which face it landed on, so moving across a fold line is confirmed in
+    // words as well as in the picture.
+    const meta = document.getElementById('bm3dMeta');
+    const faceName = {
+        top: 'the lid', left: 'the left wall', right: 'the right wall',
+        front: 'the front wall', back: 'the back wall',
+    }[placement.face];
+    if (meta && faceName) meta.textContent = meta.textContent.replace(/logo on [a-z ]+ at/, 'logo on ' + faceName + ' at');
 }
 
-// Repaints just the lid so dragging the logo on the flat mockup shows up here
-// immediately. Rebuilding the scene for every pointer move would throw away the
-// angle the user had turned the box to.
-function bm3dUpdateLogo(logoFrac) {
-    if (!bm3d || !bm3d.lidTopMaterial) return;
-    const old = bm3d.lidTopMaterial.map;
-    bm3d.lidTopMaterial.map = bm3dFaceTexture(
-        bm3d.hex, bm3d.lidFace.w, bm3d.lidFace.h, bm3d.logoImage, logoFrac
-    );
-    bm3d.lidTopMaterial.needsUpdate = true;
-    if (old) old.dispose();
+// Repaints whichever face the logo is on, and clears the rest, so dragging it
+// across a fold line on the flat mockup moves it onto the matching wall here.
+// Only the affected materials are touched — rebuilding the scene per pointer
+// move would throw away the angle the box had been turned to.
+function bm3dUpdateLogo(placement) {
+    if (!bm3d || !bm3d.faceInfo) return;
+    const want = (placement && placement.face) || 'top';
+    Object.keys(bm3d.faceInfo).forEach(function (key) {
+        const f = bm3d.faceInfo[key];
+        if (!f) return;
+        const carries = key === want;
+        // Leave a face alone if it is already blank and should stay blank.
+        if (!carries && !f.hasLogo) return;
+        const old = f.material.map;
+        f.material.map = bm3dFaceTexture(
+            bm3d.hex, f.w, f.h, carries ? bm3d.logoImage : null, carries ? placement : null
+        );
+        f.material.needsUpdate = true;
+        f.hasLogo = carries;
+        if (old) old.dispose();
+    });
 }
