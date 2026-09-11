@@ -945,6 +945,51 @@ app.use((err, req, res, next) => {
 // browser at render time, so there is no combinatorial explosion of stored
 // images the way there is for the photographic combos above.
 
+// Die-lines are technical drawings, and a raster one caps everything downstream
+// at whatever resolution it was scanned or exported at — one uploaded template
+// works out at about 104 DPI across the sheet, against the 300 print wants. A
+// vector die-line has no such ceiling, so SVG is accepted alongside the raster
+// formats and is strongly the better source.
+const TEMPLATE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']);
+
+// Pulls width/height out of an SVG, preferring the viewBox since width/height
+// are often given in physical units (mm, in) rather than pixels.
+function svgDimensions(text) {
+    const vb = /viewBox\s*=\s*["']\s*[-\d.]+[ ,]+[-\d.]+[ ,]+([\d.]+)[ ,]+([\d.]+)/i.exec(text);
+    if (vb) return { width: Math.round(parseFloat(vb[1])), height: Math.round(parseFloat(vb[2])) };
+    const w = /\bwidth\s*=\s*["']([\d.]+)/i.exec(text);
+    const h = /\bheight\s*=\s*["']([\d.]+)/i.exec(text);
+    if (w && h) return { width: Math.round(parseFloat(w[1])), height: Math.round(parseFloat(h[1])) };
+    return null;
+}
+
+// The caption is real text in a vector die-line, so it can be read exactly
+// rather than guessed at by a vision model.
+function svgCaption(text) {
+    const parts = [];
+    const re = /<text\b[^>]*>([\s\S]*?)<\/text>/gi;
+    let m;
+    while ((m = re.exec(text))) {
+        const plain = m[1].replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+        if (plain) parts.push(plain);
+    }
+    return parts.join('\n');
+}
+
+// Reads style / type / size straight out of a caption we already have as text.
+function parseCaption(caption) {
+    const lines = String(caption || '').split(/[\n\r]+/).map((l) => l.trim()).filter(Boolean);
+    const out = { style: '', type: '', size: '' };
+    for (const line of lines) {
+        const size = /BOX\s*SIZE\s*[-:]?\s*([0-9.]+\s*[xX*]\s*[0-9.]+(?:\s*[xX*]\s*[0-9.]+)?)/i.exec(line);
+        if (size) { out.size = size[1].replace(/\s+/g, ''); continue; }
+        if (/BOX\s*COLOUR|BOX\s*COLOR|PRINTING|^JN\b|^QTY\b/i.test(line)) continue;
+        if (!out.style) out.style = line;
+        else if (!out.type) out.type = line;
+    }
+    return out;
+}
+
 function templateId(style, type, size) {
     return [slugify(style), slugify(type), slugify(size)].filter(Boolean).join('-') || 'template';
 }
@@ -969,9 +1014,10 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded. Send it as multipart/form-data field "template".' });
     }
-    if (!ACCEPTED_IMAGE_TYPES.has(req.file.mimetype)) {
-        return res.status(400).json({ error: 'Only PNG, JPG or WEBP files are accepted.' });
+    if (!TEMPLATE_TYPES.has(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Only SVG, PNG, JPG or WEBP files are accepted.' });
     }
+    const isSvg = req.file.mimetype === 'image/svg+xml';
 
     let styleLabel = String(req.body.styleLabel || '').trim();
     let typeLabel = String(req.body.typeLabel || '').trim();
@@ -982,14 +1028,23 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
     // if the AI is unconfigured or unreachable.
     let readError = null;
     if (!styleLabel || !sizeLabel) {
-        try {
-            const info = await aiEnhance.readBoxTemplateInfo(req.file.buffer, req.file.mimetype, OPENAI_TIMEOUT_MS);
+        if (isSvg) {
+            // No model needed: the caption is text in the file.
+            const info = parseCaption(svgCaption(req.file.buffer.toString('utf8')));
             if (!styleLabel) styleLabel = info.style;
             if (!typeLabel) typeLabel = info.type;
             if (!sizeLabel) sizeLabel = info.size;
-        } catch (err) {
-            readError = err.message;
-            console.warn('Could not read die-line caption:', err.message);
+            if (!styleLabel && !sizeLabel) readError = 'no caption text found in the SVG';
+        } else {
+            try {
+                const info = await aiEnhance.readBoxTemplateInfo(req.file.buffer, req.file.mimetype, OPENAI_TIMEOUT_MS);
+                if (!styleLabel) styleLabel = info.style;
+                if (!typeLabel) typeLabel = info.type;
+                if (!sizeLabel) sizeLabel = info.size;
+            } catch (err) {
+                readError = err.message;
+                console.warn('Could not read die-line caption:', err.message);
+            }
         }
     }
 
@@ -1000,7 +1055,8 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
         });
     }
 
-    const ext = req.file.mimetype === 'image/jpeg' ? 'jpg' : (req.file.mimetype === 'image/webp' ? 'webp' : 'png');
+    const ext = isSvg ? 'svg'
+        : (req.file.mimetype === 'image/jpeg' ? 'jpg' : (req.file.mimetype === 'image/webp' ? 'webp' : 'png'));
     const id = templateId(styleLabel, typeLabel, sizeLabel);
     const dims = aiEnhance.parseBoxSize(sizeLabel);
 
@@ -1009,18 +1065,27 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
         // size later needs pixels-per-inch, which needs both halves of that ratio.
         let pixelWidth = null;
         let pixelHeight = null;
-        try {
-            const probe = await Jimp.read(req.file.buffer);
-            pixelWidth = probe.bitmap.width;
-            pixelHeight = probe.bitmap.height;
-        } catch (probeErr) {
-            return res.status(400).json({ error: 'Could not read that image file.', detail: probeErr.message });
+        if (isSvg) {
+            const dims = svgDimensions(req.file.buffer.toString('utf8'));
+            if (!dims) {
+                return res.status(400).json({ error: 'That SVG has no width/height or viewBox to size it by.' });
+            }
+            pixelWidth = dims.width;
+            pixelHeight = dims.height;
+        } else {
+            try {
+                const probe = await Jimp.read(req.file.buffer);
+                pixelWidth = probe.bitmap.width;
+                pixelHeight = probe.bitmap.height;
+            } catch (probeErr) {
+                return res.status(400).json({ error: 'Could not read that image file.', detail: probeErr.message });
+            }
         }
 
         fs.mkdirSync(catalogStore.TEMPLATES_DIR, { recursive: true });
         // Remove any previous file for this id whose extension differs, or the
         // old one would linger and be served instead.
-        for (const old of ['png', 'jpg', 'webp']) {
+        for (const old of ['png', 'jpg', 'webp', 'svg']) {
             const p = catalogStore.templateImagePath(id, old);
             if (old !== ext && fs.existsSync(p)) fs.unlinkSync(p);
         }
@@ -1039,6 +1104,7 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
             pixelWidth,
             pixelHeight,
             ext,
+            vector: isSvg,
         };
         const idx = catalog.boxTemplates.findIndex((t) => t.id === id);
         if (idx >= 0) catalog.boxTemplates[idx] = { ...catalog.boxTemplates[idx], ...entry };

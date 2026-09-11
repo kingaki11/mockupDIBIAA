@@ -563,6 +563,55 @@ function bmApplyPrintingColour(dataUrl, printing) {
     });
 }
 
+// Print wants 300 DPI. A raster die-line cannot be given detail it never had, so
+// this only lifts vector templates — but for those it is the whole difference
+// between a usable file and a soft one.
+const BM_TARGET_DPI = 300;
+const BM_MAX_RASTER = 4200;   // keeps a 15-inch sheet from becoming unworkable
+
+function bmTargetPixels(tpl) {
+    const flatInches = (tpl.length || 0) + 2 * (tpl.height || 0);
+    if (!(flatInches > 0)) return tpl.pixelWidth || 1200;
+    return Math.min(BM_MAX_RASTER, Math.max(tpl.pixelWidth || 0, Math.round(flatInches * BM_TARGET_DPI)));
+}
+
+// Rasterises a vector die-line at whatever size we ask for.
+//
+// The SVG is fetched as text and its width/height rewritten before it is handed
+// to the browser, because an <img> rasterises an SVG at its own declared size and
+// then scales that bitmap — drawing it larger on the canvas would just enlarge a
+// small rendering. A viewBox is added when the file lacks one, or changing
+// width/height resizes the canvas without scaling what is drawn on it. The blob
+// is same-origin, so the canvas stays readable for the mask work.
+async function bmLoadVectorTemplate(tpl, targetW, targetH) {
+    const res = await fetch(BACKEND_URL + '/box-template-image/' + tpl.id);
+    if (!res.ok) throw new Error('Could not load the die-line (' + res.status + ').');
+    let text = await res.text();
+
+    if (!/viewBox\s*=/i.test(text)) {
+        text = text.replace(/<svg\b/i, '<svg viewBox="0 0 ' + (tpl.pixelWidth || targetW) + ' ' + (tpl.pixelHeight || targetH) + '"');
+    }
+    text = text.replace(/<svg\b([^>]*)>/i, function (m, attrs) {
+        const cleaned = attrs
+            .replace(/\s+width\s*=\s*(["'])[^"']*\1/i, '')
+            .replace(/\s+height\s*=\s*(["'])[^"']*\1/i, '');
+        return '<svg' + cleaned + ' width="' + targetW + '" height="' + targetH + '">';
+    });
+
+    const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+    try {
+        return await new Promise(function (resolve, reject) {
+            const img = new Image();
+            img.onload = function () { resolve(img); };
+            img.onerror = function () { reject(new Error('That SVG die-line could not be rendered.')); };
+            img.src = url;
+        });
+    } finally {
+        // Revoked after decode; the canvas keeps its own copy of the pixels.
+        setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+    }
+}
+
 function bmLoadImage(src) {
     return new Promise(function (resolve, reject) {
         const img = new Image();
@@ -599,14 +648,28 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         const coloured = await bmApplyPrintingColour(bmLogoUrl, printing);
         bmLogoSource = coloured;
 
-        const tplImg = await bmLoadImage(BACKEND_URL + '/box-template-image/' + tpl.id);
+        // Work at print resolution where the source allows it. A vector die-line
+        // is rasterised to the size we actually want; a raster one is used as-is,
+        // since enlarging it would only make a soft picture bigger.
+        const rasterW = bmTargetPixels(tpl);
+        const aspect = (tpl.pixelHeight && tpl.pixelWidth) ? tpl.pixelHeight / tpl.pixelWidth : 1;
+        const tplImg = tpl.vector
+            ? await bmLoadVectorTemplate(tpl, rasterW, Math.round(rasterW * aspect))
+            : await bmLoadImage(BACKEND_URL + '/box-template-image/' + tpl.id);
 
-        // Recolour at the template's own resolution, then scale for display so
-        // the export can go back up to full size without re-reading anything.
+        // Recolour at that resolution, then scale down for display so the export
+        // can go back up to full size without re-reading anything.
         const full = document.createElement('canvas');
-        full.width = tplImg.naturalWidth;
-        full.height = tplImg.naturalHeight;
-        full.getContext('2d').drawImage(tplImg, 0, 0);
+        full.width = tplImg.naturalWidth || rasterW;
+        full.height = tplImg.naturalHeight || Math.round(rasterW * aspect);
+        const fullCtx = full.getContext('2d');
+        // White ground first. A vector die-line is line work on transparency, and
+        // an unpainted canvas reads as rgb(0,0,0) — so every pixel looked like
+        // ink, nothing was left for the fill to reach, and the whole export came
+        // out solid dark. A raster template is opaque and covers this anyway.
+        fullCtx.fillStyle = '#ffffff';
+        fullCtx.fillRect(0, 0, full.width, full.height);
+        fullCtx.drawImage(tplImg, 0, 0, full.width, full.height);
         const region = bmArtworkRegion(full);
         const layers = bmRecolour(full, colour, region);
 
@@ -697,10 +760,17 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             scale: scale,
         };
 
+        // Quality is worth stating rather than leaving to be discovered on the
+        // printer: the number here is what the download is actually worth.
+        const flatInches = (tpl.length || 0) + 2 * (tpl.height || 0);
+        const dpi = flatInches > 0 ? Math.round(full.width / flatInches) : null;
+
         const colourName = document.getElementById('bmColorName').textContent;
         document.getElementById('bmMeta').textContent =
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName
-            + ' · ' + sizeNote + ' · drag or resize the logo to adjust';
+            + ' · ' + sizeNote
+            + (dpi ? ' · ' + dpi + ' DPI' + (tpl.vector ? ' vector' : (dpi < 200 ? ' — upload the SVG die-line for print quality' : '')) : '')
+            + ' · drag or resize the logo to adjust';
 
         // Fold the same box in 3D. The logo is sized as a fraction of the lid so
         // it stays true to the inches entered, not to the die-line's pixels.
