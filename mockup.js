@@ -690,6 +690,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             };
             bmCanvas.on('object:moving', follow);
             bmCanvas.on('object:scaling', follow);
+            bmCanvas.on('object:rotating', follow);
             bmCanvas.on('object:modified', bm3dSyncFromCanvas);
         }
         bmCanvas.clear();
@@ -1040,11 +1041,20 @@ function bm3dFaceTexture(hex, faceW, faceH, logoImage, logoFrac) {
         const lw = c.width * logoFrac.w;
         const lh = c.height * logoFrac.h;
         // x/y are offsets from the centre of the face, as a fraction of it, so
-        // moving the logo on the flat mockup moves it on the lid by the same
-        // real-world amount.
-        const cx = c.width * (0.5 + (logoFrac.x || 0)) - lw / 2;
-        const cy = c.height * (0.5 + (logoFrac.y || 0)) - lh / 2;
-        ctx.drawImage(logoImage, cx, cy, lw, lh);
+        // moving the logo on the flat mockup moves it on the face by the same
+        // amount.
+        const cx = c.width * (0.5 + (logoFrac.x || 0));
+        const cy = c.height * (0.5 + (logoFrac.y || 0));
+        // Turned about its own centre, matching the flat mockup. This canvas is
+        // built to the face's aspect ratio, so its pixels are square against the
+        // face and an angle here is the same angle on the box — no correction
+        // needed for the face being oblong.
+        const angle = ((logoFrac.angle || 0) * Math.PI) / 180;
+        ctx.save();
+        ctx.translate(cx, cy);
+        if (angle) ctx.rotate(angle);
+        ctx.drawImage(logoImage, -lw / 2, -lh / 2, lw, lh);
+        ctx.restore();
     }
 
     const tex = new THREE.Texture(c);
@@ -1216,10 +1226,13 @@ function bm3dLogoPlacement() {
     const b = chosen.box;
     return {
         face: chosen.key,
+        // Unrotated dimensions: the turn is applied when the face is painted, so
+        // measuring the turned bounding box here would swell the logo as it spun.
         w: Math.min(0.98, lw / b.width),
         h: Math.min(0.98, lh / b.height),
         x: Math.max(-0.5, Math.min(0.5, (cx - b.cx) / b.width)),
         y: Math.max(-0.5, Math.min(0.5, (cy - b.cy) / b.height)),
+        angle: bmLogoObject.angle || 0,
     };
 }
 
