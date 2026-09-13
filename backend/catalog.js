@@ -68,11 +68,25 @@ function templateImagePath(id, ext) {
     return path.join(TEMPLATES_DIR, `${id}.${ext || 'png'}`);
 }
 
+// Per-colour artwork lives in a directory of its own per template, because a
+// die-line supplied already printed in each colour is better than one white
+// drawing tinted at render time — the real thing carries its own line weights
+// and knows which areas take ink.
+function templateColorDir(id) {
+    return path.join(TEMPLATES_DIR, id);
+}
+
+function templateColorPath(id, colorSlug, ext) {
+    return path.join(templateColorDir(id), `${colorSlug}.${ext || 'png'}`);
+}
+
 module.exports = {
     DATA_DIR,
     IMAGES_DIR,
     TEMPLATES_DIR,
     templateImagePath,
+    templateColorDir,
+    templateColorPath,
     readCatalog,
     writeCatalog,
     comboDir,

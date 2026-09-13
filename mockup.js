@@ -65,6 +65,59 @@ function bmHex(hex) {
 
 // ── Template selection ──
 
+// Rebuilds the swatch grid. A template that ships its own colour artwork offers
+// exactly those colours — anything else would be a swatch you cannot actually
+// produce. Templates without artwork fall back to the standard list, which is
+// still tinted at render time.
+function bmRenderSwatches(pairs, slugs) {
+    const sel = document.getElementById('bmColor');
+    const grid = document.getElementById('bmSwatches');
+    const nameEl = document.getElementById('bmColorName');
+    const previous = nameEl.textContent;
+
+    sel.innerHTML = '<option value="">--Select--</option>';
+    grid.innerHTML = '';
+    nameEl.textContent = 'none selected';
+
+    pairs.forEach(function (pair, idx) {
+        const value = slugs ? slugs[idx] : pair[1];
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = pair[0];
+        o.dataset.hex = pair[1];
+        sel.appendChild(o);
+
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'bm-swatch';
+        b.style.background = pair[1];
+        b.title = pair[0];
+        b.setAttribute('aria-label', pair[0]);
+        b.addEventListener('click', function () {
+            sel.value = value;
+            nameEl.textContent = pair[0];
+            grid.querySelectorAll('.bm-swatch').forEach(function (el) { el.classList.remove('is-active'); });
+            b.classList.add('is-active');
+        });
+        grid.appendChild(b);
+
+        // Keep the chosen colour selected across a template change where it exists.
+        if (pair[0] === previous) b.click();
+    });
+}
+
+function bmColoursForTemplate(tpl) {
+    const colours = tpl && tpl.colors ? Object.keys(tpl.colors) : [];
+    if (!colours.length) return null;
+    const sorted = colours.sort(function (a, b) {
+        return tpl.colors[a].label.localeCompare(tpl.colors[b].label);
+    });
+    return {
+        pairs: sorted.map(function (k) { return [tpl.colors[k].label, tpl.colors[k].hex || '#cccccc']; }),
+        slugs: sorted,
+    };
+}
+
 function bmPopulateColours() {
     const sel = document.getElementById('bmColor');
     const grid = document.getElementById('bmSwatches');
@@ -157,6 +210,14 @@ function bmRefreshTypeOptions() {
 function bmSelectedTemplate() {
     const id = document.getElementById('bmType').value;
     return bmTemplates.find(function (t) { return t.id === id; }) || null;
+}
+
+// Swap the palette whenever the chosen die-line changes.
+function bmSyncColoursToTemplate() {
+    const tpl = bmSelectedTemplate();
+    const own = bmColoursForTemplate(tpl);
+    if (own) bmRenderSwatches(own.pairs, own.slugs);
+    else bmRenderSwatches(BOX_COLOURS, null);
 }
 
 async function bmLoadTemplates() {
@@ -387,6 +448,122 @@ function bmRecolour(sourceCanvas, hex, region) {
         panelMask: layerCanvas((p) => panel[p]),
         inkMask: layerCanvas((p) => lum[p] <= BM_WHITE),
         ink: '#' + ink.map((n) => n.toString(16).padStart(2, '0')).join(''),
+    };
+}
+
+// Reads the layers out of a die-line that is ALREADY printed in its colour.
+//
+// Nothing is tinted here: the supplied artwork is the finished thing, so the job
+// is only to work out which pixels are panel and which are cut line, for logo
+// placement, the 3D faces and the vector export. That is the reverse of the
+// white-template path, where panels were the gaps the flood fill could not
+// reach — here the panels are the ink and the sheet around them is transparent.
+const BM_COLOUR_TOLERANCE = 46;   // distance from the panel colour that still counts as panel
+
+function bmLayersFromArtwork(sourceCanvas) {
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    const total = w * h;
+    const ctx = sourceCanvas.getContext('2d');
+    const img = ctx.getImageData(0, 0, w, h);
+    const d = img.data;
+
+    // The panel colour is simply the commonest opaque one: cut lines and any
+    // caption are a small minority of a printed area.
+    const counts = new Map();
+    const step = Math.max(1, Math.floor(total / 60000));
+    for (let p = 0; p < total; p += step) {
+        const i = p * 4;
+        if (d[i + 3] < 200) continue;
+        const key = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    let bestKey = null, best = 0;
+    counts.forEach(function (n, key) { if (n > best) { best = n; bestKey = key; } });
+    if (bestKey === null) return null;
+    const pr = ((bestKey >> 10) & 31) << 3;
+    const pg = ((bestKey >> 5) & 31) << 3;
+    const pb = (bestKey & 31) << 3;
+
+    const panel = new Uint8Array(total);
+    const ink = new Uint8Array(total);
+    const tol2 = BM_COLOUR_TOLERANCE * BM_COLOUR_TOLERANCE;
+    for (let p = 0; p < total; p++) {
+        const i = p * 4;
+        if (d[i + 3] < 128) continue;                 // the sheet around the die-line
+        const dr = d[i] - pr, dg = d[i + 1] - pg, db = d[i + 2] - pb;
+        if (dr * dr + dg * dg + db * db <= tol2) panel[p] = 1;
+        else ink[p] = 1;                              // creases, cuts, any printed rule
+    }
+
+    // Label the panels so each one can be matched to a face of the folded box.
+    const label = new Int32Array(total);
+    const queue = new Int32Array(total);
+    const sizes = [0];
+    let next = 1;
+    for (let start = 0; start < total; start++) {
+        if (!panel[start] || label[start]) continue;
+        let count = 0, head = 0, tail = 0;
+        queue[tail++] = start;
+        label[start] = next;
+        while (head < tail) {
+            const q = queue[head++];
+            count++;
+            const x = q % w, y = (q / w) | 0;
+            const push = (n) => { if (panel[n] && !label[n]) { label[n] = next; queue[tail++] = n; } };
+            if (x > 0) push(q - 1);
+            if (x < w - 1) push(q + 1);
+            if (y > 0) push(q - w);
+            if (y < h - 1) push(q + w);
+        }
+        sizes.push(count);
+        next++;
+    }
+    let largest = 0;
+    for (let i = 1; i < sizes.length; i++) if (sizes[i] > largest) largest = sizes[i];
+    const minArea = Math.max(total * 0.0006, largest * 0.02);
+
+    const boxes = new Map();
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            const id = label[p];
+            if (!id || sizes[id] < minArea) continue;
+            let b = boxes.get(id);
+            if (!b) { b = { id, minX: x, maxX: x, minY: y, maxY: y, area: sizes[id] }; boxes.set(id, b); }
+            if (x < b.minX) b.minX = x;
+            if (x > b.maxX) b.maxX = x;
+            if (y < b.minY) b.minY = y;
+            if (y > b.maxY) b.maxY = y;
+        }
+    }
+    const panelBoxes = [...boxes.values()].map(function (b) {
+        return { ...b, cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2,
+                 width: b.maxX - b.minX + 1, height: b.maxY - b.minY + 1 };
+    });
+
+    const layerCanvas = (test) => {
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const cctx = c.getContext('2d');
+        const li = cctx.createImageData(w, h);
+        const ld = li.data;
+        for (let p = 0; p < total; p++) {
+            const v = test(p) ? 0 : 255;
+            const i = p * 4;
+            ld[i] = v; ld[i + 1] = v; ld[i + 2] = v; ld[i + 3] = 255;
+        }
+        cctx.putImageData(li, 0, 0);
+        return c;
+    };
+
+    const panelLum = 0.299 * pr + 0.587 * pg + 0.114 * pb;
+    return {
+        canvas: sourceCanvas,
+        panelBoxes,
+        panelMask: layerCanvas((p) => panel[p]),
+        inkMask: layerCanvas((p) => ink[p]),
+        boxColour: '#' + [pr, pg, pb].map((n) => n.toString(16).padStart(2, '0')).join(''),
+        ink: panelLum < 110 ? '#f5f5f5' : '#1a1a1a',
     };
 }
 
@@ -641,27 +818,38 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         // Work at print resolution where the source allows it. A vector die-line
         // is rasterised to the size we actually want; a raster one is used as-is,
         // since enlarging it would only make a soft picture bigger.
+        // A template that ships artwork per colour hands us the finished drawing;
+        // there is nothing to tint. Otherwise we fall back to the white die-line
+        // and colour it ourselves.
+        const hasArtwork = Boolean(tpl.colors && tpl.colors[colour]);
         const rasterW = bmTargetPixels(tpl);
         const aspect = (tpl.pixelHeight && tpl.pixelWidth) ? tpl.pixelHeight / tpl.pixelWidth : 1;
+        const imageUrl = BACKEND_URL + '/box-template-image/' + tpl.id
+            + (hasArtwork ? '?color=' + encodeURIComponent(colour) : '');
         const tplImg = tpl.vector
             ? await bmLoadVectorTemplate(tpl, rasterW, Math.round(rasterW * aspect))
-            : await bmLoadImage(BACKEND_URL + '/box-template-image/' + tpl.id);
+            : await bmLoadImage(imageUrl);
 
-        // Recolour at that resolution, then scale down for display so the export
-        // can go back up to full size without re-reading anything.
         const full = document.createElement('canvas');
         full.width = tplImg.naturalWidth || rasterW;
         full.height = tplImg.naturalHeight || Math.round(rasterW * aspect);
         const fullCtx = full.getContext('2d');
-        // White ground first. A vector die-line is line work on transparency, and
-        // an unpainted canvas reads as rgb(0,0,0) — so every pixel looked like
-        // ink, nothing was left for the fill to reach, and the whole export came
-        // out solid dark. A raster template is opaque and covers this anyway.
-        fullCtx.fillStyle = '#ffffff';
-        fullCtx.fillRect(0, 0, full.width, full.height);
+        if (!hasArtwork) {
+            // White ground first. A vector die-line is line work on transparency,
+            // and an unpainted canvas reads as rgb(0,0,0) — so every pixel looked
+            // like ink, nothing was left for the fill to reach, and the whole
+            // export came out solid dark. Printed artwork keeps its own
+            // transparency instead, which is what makes the sheet drop away.
+            fullCtx.fillStyle = '#ffffff';
+            fullCtx.fillRect(0, 0, full.width, full.height);
+        }
         fullCtx.drawImage(tplImg, 0, 0, full.width, full.height);
+
         const region = bmArtworkRegion(full);
-        const layers = bmRecolour(full, colour, region);
+        const layers = hasArtwork
+            ? bmLayersFromArtwork(full)
+            : bmRecolour(full, colour, region);
+        if (!layers) throw new Error('Could not read that die-line.');
 
         // Reveal the result first: a hidden element measures zero wide.
         document.getElementById('bmPlaceholder').style.display = 'none';
@@ -743,7 +931,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             inkMask: layers.inkMask,
             width: full.width,
             height: full.height,
-            boxColor: colour,
+            boxColor: layers.boxColour || colour,
             inkColor: layers.ink,
             printColor: printRgb
                 ? '#' + printRgb.map(function (n) { return n.toString(16).padStart(2, '0'); }).join('')
@@ -769,6 +957,20 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             const lidL = tpl.length || 0;
             const lidW = tpl.width || 0;
             const twoPiece = bmIsTopBottom(tpl.styleLabel);
+
+            // Several die-lines are named by footprint alone — "3x3", "9x2" — with
+            // no depth. The drawing knows it even when the name does not: a side
+            // wall is exactly the box's height laid flat, so its width against the
+            // lid's gives the depth in the same inches as the length.
+            const faces = bmClassifyFaces(layers.panelBoxes);
+            let boxH = tpl.height || 0;
+            if (!boxH && faces && faces.top && lidL > 0) {
+                const side = faces.left || faces.right;
+                const endw = faces.front || faces.back;
+                if (side) boxH = (side.width / faces.top.width) * lidL;
+                else if (endw && lidW > 0) boxH = (endw.height / faces.top.height) * lidW;
+                boxH = Math.round(boxH * 100) / 100;
+            }
             const allow = twoPiece ? BM_LID_ALLOWANCE : 0;
             const logoWIn = wantLen;
             const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
@@ -777,15 +979,12 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             // not have to re-derive the geometry. The panel map is the important
             // part: it is what lets a logo dragged onto a side wing appear on
             // that wall rather than being pinned to the lid.
-            bm3dContext = {
-                scale: scale,
-                faces: bmClassifyFaces(layers.panelBoxes),
-            };
+            bm3dContext = { scale: scale, faces: faces };
 
             const placement = bm3dLogoPlacement();
             bmRender3D(
-                { length: lidL || 2, width: lidW || 2, height: tpl.height || 1 },
-                colour,
+                { length: lidL || 2, width: lidW || 2, height: boxH || 1 },
+                layers.boxColour || colour,
                 logoImg,
                 placement,
                 { separateLid: twoPiece }
@@ -795,7 +994,8 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 front: 'the front wall', back: 'the back wall',
             }[placement.face] || 'the lid';
             document.getElementById('bm3dMeta').textContent = (lidL && lidW)
-                ? lidL + '×' + lidW + '×' + (tpl.height || 0) + ' in · logo on ' + faceName + ' at '
+                ? lidL + '×' + lidW + '×' + (boxH || 0) + (tpl.height ? '' : ' (depth read off the die-line)')
+                  + ' in · logo on ' + faceName + ' at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
                   + (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : '')
                 : 'This template has no size on it, so the proportions are approximate.';
@@ -900,7 +1100,11 @@ document.getElementById('bmDownloadSvg').addEventListener('click', async functio
     }
 });
 
-document.getElementById('bmStyle').addEventListener('change', bmRefreshTypeOptions);
+document.getElementById('bmStyle').addEventListener('change', function () {
+    bmRefreshTypeOptions();
+    bmSyncColoursToTemplate();
+});
+document.getElementById('bmType').addEventListener('change', bmSyncColoursToTemplate);
 
 document.getElementById('bmGoUpload').addEventListener('click', function () {
     const d = document.getElementById('bmTplDetails');

@@ -999,10 +999,49 @@ app.get('/box-templates', (req, res) => {
     res.json({ templates: catalog.boxTemplates || [] });
 });
 
+// Samples the colour a die-line is actually printed in, so the swatch shown in
+// the picker is taken from the artwork rather than from a name someone typed.
+// The most common opaque colour is the panel fill; cut lines and the sheet
+// around it are a small minority of the pixels.
+async function sampleArtworkColour(buffer) {
+    const image = await Jimp.read(buffer);
+    const { width: w, height: h, data } = image.bitmap;
+    const total = w * h;
+    const step = Math.max(1, Math.floor(total / 60000));
+    const counts = new Map();
+    for (let p = 0; p < total; p += step) {
+        const i = p * 4;
+        if (data[i + 3] < 200) continue;
+        // Quantised, so anti-aliasing does not split one colour into hundreds.
+        const key = ((data[i] >> 3) << 10) | ((data[i + 1] >> 3) << 5) | (data[i + 2] >> 3);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    let bestKey = null;
+    let best = 0;
+    counts.forEach((n, key) => { if (n > best) { best = n; bestKey = key; } });
+    if (bestKey === null) return null;
+    const r = ((bestKey >> 10) & 31) << 3;
+    const g = ((bestKey >> 5) & 31) << 3;
+    const b = (bestKey & 31) << 3;
+    return '#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('');
+}
+
 app.get('/box-template-image/:id', (req, res) => {
     const catalog = catalogStore.readCatalog();
     const tpl = (catalog.boxTemplates || []).find((t) => t.id === req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Template not found.' });
+
+    // A colour variant is the whole die-line already printed in that colour.
+    const wanted = String(req.query.color || '').trim();
+    if (wanted && tpl.colors && tpl.colors[wanted]) {
+        const v = tpl.colors[wanted];
+        const colourPath = catalogStore.templateColorPath(tpl.id, wanted, v.ext);
+        if (colourPath.startsWith(catalogStore.TEMPLATES_DIR) && fs.existsSync(colourPath)) {
+            return res.sendFile(colourPath);
+        }
+        return res.status(404).json({ error: 'That colour is not stored for this template.' });
+    }
+
     const filePath = catalogStore.templateImagePath(tpl.id, tpl.ext);
     if (!filePath.startsWith(catalogStore.TEMPLATES_DIR) || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Template image not found.' });
@@ -1118,6 +1157,96 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
     }
 });
 
+// Adds one colour of a die-line. The supplied artwork is already printed in that
+// colour, so nothing is tinted at render time — selecting a colour just picks the
+// right drawing.
+//
+// The template is created on first use, which lets a whole folder of sizes and
+// colours be pushed in without setting anything up first.
+app.post('/admin/box-template-color', requireAdmin, upload.single('template'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded. Send it as multipart/form-data field "template".' });
+    }
+    if (!TEMPLATE_TYPES.has(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Only SVG, PNG, JPG or WEBP files are accepted.' });
+    }
+
+    const styleLabel = String(req.body.styleLabel || '').trim();
+    const typeLabel = String(req.body.typeLabel || '').trim();
+    const sizeLabel = String(req.body.sizeLabel || '').trim();
+    const colorLabel = String(req.body.colorLabel || '').trim();
+
+    if (!styleLabel && !typeLabel) {
+        return res.status(400).json({ error: 'styleLabel or typeLabel is required.' });
+    }
+    if (!colorLabel) {
+        return res.status(400).json({ error: 'colorLabel is required.' });
+    }
+
+    const isSvg = req.file.mimetype === 'image/svg+xml';
+    const ext = isSvg ? 'svg'
+        : (req.file.mimetype === 'image/jpeg' ? 'jpg' : (req.file.mimetype === 'image/webp' ? 'webp' : 'png'));
+    const id = templateId(styleLabel, typeLabel, sizeLabel);
+    const colorSlug = slugify(colorLabel);
+    if (!colorSlug) return res.status(400).json({ error: 'That colour name has no usable characters.' });
+
+    try {
+        let pixelWidth = null;
+        let pixelHeight = null;
+        let hex = null;
+        if (isSvg) {
+            const dims = svgDimensions(req.file.buffer.toString('utf8'));
+            if (!dims) return res.status(400).json({ error: 'That SVG has no width/height or viewBox to size it by.' });
+            pixelWidth = dims.width;
+            pixelHeight = dims.height;
+        } else {
+            try {
+                const probe = await Jimp.read(req.file.buffer);
+                pixelWidth = probe.bitmap.width;
+                pixelHeight = probe.bitmap.height;
+                hex = await sampleArtworkColour(req.file.buffer);
+            } catch (probeErr) {
+                return res.status(400).json({ error: 'Could not read that image file.', detail: probeErr.message });
+            }
+        }
+
+        fs.mkdirSync(catalogStore.templateColorDir(id), { recursive: true });
+        for (const old of ['png', 'jpg', 'webp', 'svg']) {
+            const prev = catalogStore.templateColorPath(id, colorSlug, old);
+            if (old !== ext && fs.existsSync(prev)) fs.unlinkSync(prev);
+        }
+        fs.writeFileSync(catalogStore.templateColorPath(id, colorSlug, ext), req.file.buffer);
+
+        const catalog = catalogStore.readCatalog();
+        catalog.boxTemplates = catalog.boxTemplates || [];
+        let tpl = catalog.boxTemplates.find((t) => t.id === id);
+        const dims = aiEnhance.parseBoxSize(sizeLabel);
+        if (!tpl) {
+            tpl = {
+                id, styleLabel, typeLabel, sizeLabel,
+                length: dims ? dims.length : null,
+                width: dims ? dims.width : null,
+                height: dims ? dims.height : null,
+                pixelWidth, pixelHeight,
+                ext, vector: isSvg,
+                colors: {},
+            };
+            catalog.boxTemplates.push(tpl);
+        }
+        tpl.colors = tpl.colors || {};
+        tpl.colors[colorSlug] = { label: colorLabel, hex, ext, pixelWidth, pixelHeight };
+        // Keep the template's own dimensions in step with the artwork it holds.
+        tpl.pixelWidth = tpl.pixelWidth || pixelWidth;
+        tpl.pixelHeight = tpl.pixelHeight || pixelHeight;
+        catalogStore.writeCatalog(catalog);
+
+        res.json({ template: tpl, colorSlug });
+    } catch (err) {
+        console.error('Failed to save colour variant:', err);
+        res.status(500).json({ error: 'Failed to save that colour.', detail: err.message });
+    }
+});
+
 app.delete('/admin/box-template/:id', requireAdmin, (req, res) => {
     const catalog = catalogStore.readCatalog();
     catalog.boxTemplates = catalog.boxTemplates || [];
@@ -1126,6 +1255,10 @@ app.delete('/admin/box-template/:id', requireAdmin, (req, res) => {
     try {
         const filePath = catalogStore.templateImagePath(tpl.id, tpl.ext);
         if (filePath.startsWith(catalogStore.TEMPLATES_DIR) && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        const colourDir = catalogStore.templateColorDir(tpl.id);
+        if (colourDir.startsWith(catalogStore.TEMPLATES_DIR) && fs.existsSync(colourDir)) {
+            fs.rmSync(colourDir, { recursive: true, force: true });
+        }
         catalog.boxTemplates = catalog.boxTemplates.filter((t) => t.id !== req.params.id);
         catalogStore.writeCatalog(catalog);
         res.json({ templates: catalog.boxTemplates });
