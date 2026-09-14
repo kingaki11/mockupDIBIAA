@@ -397,11 +397,11 @@
                 <label for="bmType">Box Type</label>
                 <select id="bmType"><option value="">--Select--</option></select>
 
-                <span class="bm-field-label">Box Colour <em id="bmColorName">none selected</em></span>
-                <!-- The select stays as the value holder so nothing downstream changes;
-                     the swatches are just a readable way to operate it. -->
-                <select id="bmColor" class="bm-sr-only" tabindex="-1"><option value="">--Select--</option></select>
-                <div id="bmSwatches" class="bm-swatches"></div>
+                <label for="bmColor">Box Colour</label>
+                <div class="bm-select-chip">
+                    <select id="bmColor"><option value="">--Select--</option></select>
+                    <span id="bmColorChip" class="bm-chip" aria-hidden="true"></span>
+                </div>
 
                 <label for="bmPrintColor">Printing Colour</label>
                 <div class="bm-select-chip">

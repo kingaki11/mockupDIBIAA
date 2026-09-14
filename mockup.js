@@ -65,45 +65,45 @@ function bmHex(hex) {
 
 // ── Template selection ──
 
-// Rebuilds the swatch grid. A template that ships its own colour artwork offers
-// exactly those colours — anything else would be a swatch you cannot actually
+// Rebuilds the colour list. A template that ships its own colour artwork offers
+// exactly those colours — anything else would be a colour you cannot actually
 // produce. Templates without artwork fall back to the standard list, which is
 // still tinted at render time.
-function bmRenderSwatches(pairs, slugs) {
+function bmRenderColourOptions(pairs, slugs) {
     const sel = document.getElementById('bmColor');
-    const grid = document.getElementById('bmSwatches');
-    const nameEl = document.getElementById('bmColorName');
-    const previous = nameEl.textContent;
+    const previous = bmSelectedColourName();
 
     sel.innerHTML = '<option value="">--Select--</option>';
-    grid.innerHTML = '';
-    nameEl.textContent = 'none selected';
-
     pairs.forEach(function (pair, idx) {
-        const value = slugs ? slugs[idx] : pair[1];
         const o = document.createElement('option');
-        o.value = value;
+        o.value = slugs ? slugs[idx] : pair[1];
         o.textContent = pair[0];
         o.dataset.hex = pair[1];
         sel.appendChild(o);
-
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'bm-swatch';
-        b.style.background = pair[1];
-        b.title = pair[0];
-        b.setAttribute('aria-label', pair[0]);
-        b.addEventListener('click', function () {
-            sel.value = value;
-            nameEl.textContent = pair[0];
-            grid.querySelectorAll('.bm-swatch').forEach(function (el) { el.classList.remove('is-active'); });
-            b.classList.add('is-active');
-        });
-        grid.appendChild(b);
-
-        // Keep the chosen colour selected across a template change where it exists.
-        if (pair[0] === previous) b.click();
     });
+
+    // Keep the chosen colour selected across a template change where it exists.
+    const match = [...sel.options].find(function (o) { return o.value && o.textContent === previous; });
+    sel.value = match ? match.value : '';
+    bmSyncColourChip();
+}
+
+function bmSelectedColourName() {
+    const sel = document.getElementById('bmColor');
+    const o = sel.options[sel.selectedIndex];
+    return o && o.value ? o.textContent : '';
+}
+
+// Name the colour, but show it too: WINE and MAROON are not tellable apart from
+// their names alone.
+function bmSyncColourChip() {
+    const sel = document.getElementById('bmColor');
+    const chip = document.getElementById('bmColorChip');
+    if (!chip) return;
+    const o = sel.options[sel.selectedIndex];
+    const hex = o && o.dataset ? o.dataset.hex : '';
+    chip.style.background = hex || 'transparent';
+    chip.style.display = hex ? 'block' : 'none';
 }
 
 function bmColoursForTemplate(tpl) {
@@ -119,33 +119,8 @@ function bmColoursForTemplate(tpl) {
 }
 
 function bmPopulateColours() {
-    const sel = document.getElementById('bmColor');
-    const grid = document.getElementById('bmSwatches');
-    const nameEl = document.getElementById('bmColorName');
-
-    BOX_COLOURS.forEach(function (pair) {
-        const o = document.createElement('option');
-        o.value = pair[1];
-        o.textContent = pair[0];
-        sel.appendChild(o);
-
-        // Twenty-six colours are unusable as a list of names — you cannot tell
-        // MAROON from WINE without seeing them. The select still holds the value;
-        // this is just a legible way to set it.
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'bm-swatch';
-        b.style.background = pair[1];
-        b.title = pair[0] + ' · ' + pair[1];
-        b.setAttribute('aria-label', pair[0]);
-        b.addEventListener('click', function () {
-            sel.value = pair[1];
-            nameEl.textContent = pair[0];
-            grid.querySelectorAll('.bm-swatch').forEach(function (el) { el.classList.remove('is-active'); });
-            b.classList.add('is-active');
-        });
-        grid.appendChild(b);
-    });
+    bmRenderColourOptions(BOX_COLOURS, null);
+    document.getElementById('bmColor').addEventListener('change', bmSyncColourChip);
 
     // Printing colours come from the same map the Create Mockup tab recolours
     // with, so the two tabs cannot drift apart.
@@ -216,8 +191,8 @@ function bmSelectedTemplate() {
 function bmSyncColoursToTemplate() {
     const tpl = bmSelectedTemplate();
     const own = bmColoursForTemplate(tpl);
-    if (own) bmRenderSwatches(own.pairs, own.slugs);
-    else bmRenderSwatches(BOX_COLOURS, null);
+    if (own) bmRenderColourOptions(own.pairs, own.slugs);
+    else bmRenderColourOptions(BOX_COLOURS, null);
 }
 
 async function bmLoadTemplates() {
@@ -851,6 +826,12 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             : bmRecolour(full, colour, region);
         if (!layers) throw new Error('Could not read that die-line.');
 
+        // Measure the panels once here: the logo's inch scale, the quality note
+        // and the 3D box all have to agree about how big this drawing is, and
+        // deriving it twice is how they drift apart.
+        const faces = bmClassifyFaces(layers.panelBoxes);
+        const geo = bmDieGeometry(tpl, faces);
+
         // Reveal the result first: a hidden element measures zero wide.
         document.getElementById('bmPlaceholder').style.display = 'none';
         document.getElementById('bmResultWrap').style.display = 'block';
@@ -890,7 +871,11 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         const logoImg = await bmLoadImage(coloured);
         bmLogoNatural = { w: logoImg.naturalWidth, h: logoImg.naturalHeight };
 
-        const ppi = bmPixelsPerInch(tpl, region);
+        // The panel measures the box's own footprint, so it converts inches to
+        // pixels exactly. Dividing the whole sheet by the length instead — the
+        // old fallback — counts the walls as if they were part of the lid, which
+        // on a depth-less name like "8x9" made a 1in logo 40% too big.
+        const ppi = geo.pxPerIn || bmPixelsPerInch(tpl, region);
         let targetW;
         let sizeNote;
         if (ppi) {
@@ -942,9 +927,11 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         // Quality is worth stating rather than leaving to be discovered on the
         // printer: the number here is what the download is actually worth.
         const flatInches = (tpl.length || 0) + 2 * (tpl.height || 0);
-        const dpi = flatInches > 0 ? Math.round(full.width / flatInches) : null;
+        const dpi = geo.pxPerIn
+            ? Math.round(geo.pxPerIn)
+            : (flatInches > 0 ? Math.round(full.width / flatInches) : null);
 
-        const colourName = document.getElementById('bmColorName').textContent;
+        const colourName = bmSelectedColourName() || colour;
         document.getElementById('bmMeta').textContent =
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName
             + ' · ' + sizeNote
@@ -954,23 +941,14 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         // Fold the same box in 3D. The logo is sized as a fraction of the lid so
         // it stays true to the inches entered, not to the die-line's pixels.
         try {
-            const lidL = tpl.length || 0;
-            const lidW = tpl.width || 0;
+            // Straight off the drawing, so the lid in 3D is the same rectangle
+            // as the panel on the flat mockup — including its orientation. The
+            // logo is placed as a fraction of that panel, so the moment the two
+            // disagree the logo lands squashed and in the wrong spot.
+            const lidL = geo.length || 0;
+            const lidW = geo.width || 0;
+            const boxH = geo.height || 0;
             const twoPiece = bmIsTopBottom(tpl.styleLabel);
-
-            // Several die-lines are named by footprint alone — "3x3", "9x2" — with
-            // no depth. The drawing knows it even when the name does not: a side
-            // wall is exactly the box's height laid flat, so its width against the
-            // lid's gives the depth in the same inches as the length.
-            const faces = bmClassifyFaces(layers.panelBoxes);
-            let boxH = tpl.height || 0;
-            if (!boxH && faces && faces.top && lidL > 0) {
-                const side = faces.left || faces.right;
-                const endw = faces.front || faces.back;
-                if (side) boxH = (side.width / faces.top.width) * lidL;
-                else if (endw && lidW > 0) boxH = (endw.height / faces.top.height) * lidW;
-                boxH = Math.round(boxH * 100) / 100;
-            }
             const allow = twoPiece ? BM_LID_ALLOWANCE : 0;
             const logoWIn = wantLen;
             const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
@@ -994,7 +972,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 front: 'the front wall', back: 'the back wall',
             }[placement.face] || 'the lid';
             document.getElementById('bm3dMeta').textContent = (lidL && lidW)
-                ? lidL + '×' + lidW + '×' + (boxH || 0) + (tpl.height ? '' : ' (depth read off the die-line)')
+                ? lidL + '×' + lidW + '×' + (boxH || 0) + (geo.depthFromDie ? ' (depth read off the die-line)' : '')
                   + ' in · logo on ' + faceName + ' at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
                   + (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : '')
@@ -1391,6 +1369,55 @@ function bmClassifyFaces(panelBoxes) {
         }
     });
     return faces;
+}
+
+// The box's shape, taken from the die-line rather than from the name on the
+// folder. The drawing is the artwork that actually gets printed, so it is the
+// honest record: seven of the nine supplied sizes agree with their name to
+// within 1%, but the long necklace dies ("11x2", "9x2") are drawn at about 4:1
+// where their name says 5.5:1. Building the 3D box from the name stretched the
+// lid to an aspect the die-line never had, and since the logo is positioned as a
+// fraction of the panel it carries that stretch with it — which is why a logo
+// centred on the flat die came out the wrong shape and off-centre on the box.
+//
+// The name still fixes the absolute scale: its larger footprint number is
+// matched to the panel's longer edge, so an "11x2" box is still eleven inches
+// long. Only the proportions come from the drawing.
+function bmDieGeometry(tpl, faces) {
+    const namedL = (tpl && tpl.length) || 0;
+    const namedW = (tpl && tpl.width) || 0;
+    const namedH = (tpl && tpl.height) || 0;
+    const plain = { length: namedL, width: namedW, height: namedH, pxPerIn: null, fromDie: false, depthFromDie: false };
+
+    const top = faces && faces.top;
+    if (!top || !(top.width > 0) || !(top.height > 0)) return plain;
+    const anchorIn = Math.max(namedL, namedW);
+    if (!(anchorIn > 0)) return plain;
+
+    const pxPerIn = Math.max(top.width, top.height) / anchorIn;
+    const round = function (v) { return Math.round(v * 100) / 100; };
+
+    // A wall laid flat is the box's depth. Where a wall butts onto its own tuck
+    // flap with no gap between them the two read as a single region, which
+    // measures far too deep — on the 11x2 die that is 521px against the 304px
+    // the other pair of walls reports. So take the shallowest wall, never the
+    // deepest: a merged flap can only ever make a wall look bigger.
+    let wallPx = 0;
+    [
+        faces.front && faces.front.height, faces.back && faces.back.height,
+        faces.left && faces.left.width, faces.right && faces.right.width,
+    ].forEach(function (v) {
+        if (v > 0 && (!wallPx || v < wallPx)) wallPx = v;
+    });
+
+    return {
+        length: round(top.width / pxPerIn),
+        width: round(top.height / pxPerIn),
+        height: namedH || (wallPx ? round(wallPx / pxPerIn) : 0),
+        pxPerIn: pxPerIn,
+        fromDie: true,
+        depthFromDie: !namedH && wallPx > 0,
+    };
 }
 
 // Which face the logo is on, and where within it.
