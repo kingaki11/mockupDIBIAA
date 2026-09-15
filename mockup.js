@@ -892,10 +892,18 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             ? targetW * (bmLogoNatural.h / bmLogoNatural.w)
             : wantBre * (ppi || 1) * scale;
 
+        // Start the logo on the panel the print goes on. The middle of the sheet
+        // is only the middle of the lid on a cross-shaped tray die; a flap
+        // magnetic die is a vertical strip of five panels, and its centre is the
+        // base, so the logo opened on the wrong face of the box every time.
+        const lidPanel = faces && faces.top;
+        const startX = lidPanel ? lidPanel.cx : (region.left + region.right) / 2;
+        const startY = lidPanel ? lidPanel.cy : (region.top + region.bottom) / 2;
+
         fabric.Image.fromURL(coloured, function (obj) {
             obj.set({
-                left: ((region.left + region.right) / 2) * scale,
-                top: ((region.top + region.bottom) / 2) * scale,
+                left: startX * scale,
+                top: startY * scale,
                 originX: 'center',
                 originY: 'center',
                 scaleX: targetW / bmLogoNatural.w,
@@ -948,7 +956,8 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             const lidL = geo.length || 0;
             const lidW = geo.width || 0;
             const boxH = geo.height || 0;
-            const twoPiece = bmIsTopBottom(tpl.styleLabel);
+            const flapMagnetic = bmIsFlapMagnetic(tpl.styleLabel);
+            const twoPiece = bmIsTopBottom(tpl.styleLabel) && !flapMagnetic;
             const allow = twoPiece ? BM_LID_ALLOWANCE : 0;
             const logoWIn = wantLen;
             const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
@@ -965,7 +974,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 layers.boxColour || colour,
                 logoImg,
                 placement,
-                { separateLid: twoPiece }
+                { separateLid: twoPiece, flapMagnetic: flapMagnetic }
             );
             const faceName = {
                 top: 'the lid', left: 'the left wall', right: 'the right wall',
@@ -975,7 +984,9 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 ? lidL + '×' + lidW + '×' + (boxH || 0) + (geo.depthFromDie ? ' (depth read off the die-line)' : '')
                   + ' in · logo on ' + faceName + ' at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
-                  + (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : '')
+                  + (flapMagnetic
+                      ? ' · the lid swings over from the back and the magnet flap holds it shut'
+                      : (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : ''))
                 : 'This template has no size on it, so the proportions are approximate.';
         } catch (err) {
             // A 3D failure must not cost the user the mockup they just made.
@@ -1277,6 +1288,10 @@ const BM_LID_HEIGHT_FRACTION = 1;
 // The base is a touch shorter so it sits inside the lid rather than holding it
 // off the ground and reopening the gap the full-height lid exists to remove.
 const BM_BASE_HEIGHT_FRACTION = 0.94;
+
+// How far the magnet flap reaches down the front wall. Short of the full wall,
+// because the flap has to clear the base's front edge as it swings shut.
+const BM_FLAP_DEPTH_FRACTION = 0.82;
 // Board has a thickness and a crease; nothing folded from paper has a
 // mathematically sharp corner. Rounding by a small fraction of the shortest edge
 // is most of what separates a rendered box from a rendered cube.
@@ -1338,6 +1353,13 @@ function bmIsTopBottom(styleLabel) {
     return t.indexOf('TOP') !== -1 && t.indexOf('BOTTOM') !== -1;
 }
 
+// A flap magnetic box is one piece, not two: the lid is creased onto the top of
+// the back wall and swings over, and a flap on its front edge folds down against
+// the front wall, where the magnet holds it shut.
+function bmIsFlapMagnetic(styleLabel) {
+    return /MAGNET/i.test(String(styleLabel || ''));
+}
+
 // Works out which panel of the die-line is which face of the folded box.
 //
 // The largest panel is the one the lid is printed on. The others are read off
@@ -1396,6 +1418,25 @@ function bmDieGeometry(tpl, faces) {
 
     const pxPerIn = Math.max(top.width, top.height) / anchorIn;
     const round = function (v) { return Math.round(v * 100) / 100; };
+
+    // A caption that spells out all three dimensions is better evidence than the
+    // drawing: the flap magnetic dies carry "BOX SIZE - 2X2X1.5" in print, and
+    // their panels are cut a little over that for the board to wrap. Only the
+    // orientation is taken from the drawing — a die laid out landscape must fold
+    // to a landscape box, whichever way round the caption lists the two numbers.
+    if (namedL > 0 && namedW > 0 && namedH > 0) {
+        const longSide = Math.max(namedL, namedW);
+        const shortSide = Math.min(namedL, namedW);
+        const wide = top.width >= top.height;
+        return {
+            length: wide ? longSide : shortSide,
+            width: wide ? shortSide : longSide,
+            height: namedH,
+            pxPerIn: Math.max(top.width, top.height) / longSide,
+            fromDie: true,
+            depthFromDie: false,
+        };
+    }
 
     // A wall laid flat is the box's depth. Where a wall butts onto its own tuck
     // flap with no gap between them the two read as a single region, which
@@ -1532,8 +1573,9 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign, floor) {
 
     const right = makeWall('right', [L / 2, 0, 0], [H / 2, 0, 0], [H, W], 'z', 1);
     const left = makeWall('left', [-L / 2, 0, 0], [-H / 2, 0, 0], [H, W], 'z', -1);
-    makeWall('front', [0, 0, W / 2], [0, 0, H / 2], [L, H], 'x', -1);
-    makeWall('back', [0, 0, -W / 2], [0, 0, -H / 2], [L, H], 'x', 1);
+    const front = makeWall('front', [0, 0, W / 2], [0, 0, H / 2], [L, H], 'x', -1);
+    const back = makeWall('back', [0, 0, -W / 2], [0, 0, -H / 2], [L, H], 'x', 1);
+    const walls = { right, left, front, back };
 
     // Corner ears: hinged on the ends of the side walls, folding inward to sit
     // against the end walls. They are children of the wall hinge, so they inherit
@@ -1573,7 +1615,101 @@ function bmBuildTray(L, W, H, hex, logoImage, logoFrac, dirSign, floor) {
     }
 
     setFold(0);
-    return { group, setFold, centreMaterial, faceInfo };
+    return { group, setFold, centreMaterial, faceInfo, walls };
+}
+
+// A panel printed on the side that ends up outside, whichever way it is folded.
+//
+// The lid of a flap box turns through a full half-circle to close: the back wall
+// stands up through ninety degrees and the lid comes over the top through
+// ninety more. A single plane that reads correctly lying flat on the sheet is
+// therefore face-down once the box is shut, and a double-sided plane seen from
+// behind shows its texture mirrored — the same thing that once printed the logo
+// backwards on the top-bottom lid. Two single-sided planes back to back, each
+// carrying the artwork the right way round for the side it faces, are correct in
+// both positions with nothing to reverse halfway.
+function bmPrintedPanel(sizeX, sizeZ, texture) {
+    const group = new THREE.Group();
+    const materials = [];
+    [0, Math.PI].forEach(function (turn) {
+        const material = new THREE.MeshLambertMaterial({ map: texture, side: THREE.FrontSide });
+        const mesh = bmPanel(sizeX, sizeZ, material);
+        mesh.rotation.x = turn;
+        // A hair apart, or the two coincide and the depth buffer picks between
+        // them at random across the surface.
+        mesh.position.y = turn ? -0.0002 : 0.0002;
+        group.add(mesh);
+        materials.push(material);
+    });
+    return { group: group, materials: materials };
+}
+
+// A flap magnetic box: one tray, with the lid creased onto the top of its back
+// wall and a magnet flap creased onto the front edge of the lid.
+//
+// Everything hangs off the tray the way it does on the sheet, so unfolding is
+// just the hinges running backwards and the flat state is the die-line. The
+// three creases all turn the same way, which is what makes the lid arrive from
+// directly above rather than swinging in from the side.
+function bmBuildFlapBox(L, W, H, hex, logoImage, logoFrac) {
+    const group = new THREE.Group();
+    const onTop = logoFrac && logoFrac.face === 'top' ? logoFrac : null;
+
+    // The tray carries the walls and the floor; its own centre panel is the
+    // underside of the box, so it never takes the print.
+    const body = bmBuildTray(L, W, H, hex, logoImage, onTop ? null : logoFrac, 1);
+    body.group.position.y = -H / 2;
+    group.add(body.group);
+
+    const back = body.walls && body.walls.back;
+    if (!back) return { group: group, setFold: body.setFold, faceInfo: body.faceInfo };
+
+    // Creased onto the far edge of the back wall, exactly as on the sheet.
+    const lidHinge = new THREE.Group();
+    lidHinge.position.set(0, 0, -H);
+    back.add(lidHinge);
+
+    const lidTexture = bm3dFaceTexture(hex, L, W, logoImage, onTop);
+    const lid = bmPrintedPanel(L, W, lidTexture);
+    lid.group.position.set(0, 0, -W / 2);
+    lidHinge.add(lid.group);
+
+    // The magnet flap, creased onto the lid's front edge.
+    const flapDepth = H * BM_FLAP_DEPTH_FRACTION;
+    const flapHinge = new THREE.Group();
+    // Measured from the lid's centre, which is where its group sits — not from
+    // the crease it hangs off, or the flap floats half a lid clear of the panel
+    // it is joined to.
+    flapHinge.position.set(0, 0, -W / 2);
+    lid.group.add(flapHinge);
+    const flapMat = new THREE.MeshLambertMaterial({
+        map: bm3dFaceTexture(hex, L, flapDepth), side: THREE.DoubleSide,
+    });
+    const flap = bmPanel(L, flapDepth, flapMat);
+    flap.position.set(0, 0, -flapDepth / 2);
+    flapHinge.add(flap);
+
+    const faceInfo = {};
+    Object.keys(body.faceInfo).forEach(function (k) {
+        if (k !== 'top') faceInfo[k] = body.faceInfo[k];
+    });
+    faceInfo.top = { material: lid.materials[0], materials: lid.materials, w: L, h: W };
+    faceInfo.top.hasLogo = Boolean(onTop);
+
+    const ease = (v) => (v < 0.5 ? 2 * v * v : 1 - Math.pow(-2 * v + 2, 2) / 2);
+    const part = (t, from, to) => Math.max(0, Math.min(1, (t - from) / (to - from)));
+
+    function setFold(t) {
+        // Walls first, then the lid comes over, and the magnet flap catches last
+        // — which is the order your hands do it in, and it keeps the flap from
+        // sweeping through the front wall on the way.
+        body.setFold(part(t, 0, 0.55));
+        lidHinge.rotation.x = (Math.PI / 2) * ease(part(t, 0.45, 0.94));
+        flapHinge.rotation.x = (Math.PI / 2) * ease(part(t, 0.78, 1));
+    }
+
+    setFold(0);
+    return { group: group, setFold: setFold, faceInfo: faceInfo, flapDepth: flapDepth };
 }
 
 function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
@@ -1597,7 +1733,8 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
 
     const L = dims.length || 2, W = dims.width || 2, H = dims.height || 1;
-    const twoPiece = Boolean(options.separateLid);
+    const flapMagnetic = Boolean(options.flapMagnetic);
+    const twoPiece = Boolean(options.separateLid) && !flapMagnetic;
     const gap = twoPiece ? BM_LID_ALLOWANCE : 0;
 
     const longest = Math.max(L + gap, W + gap, H);
@@ -1607,21 +1744,28 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const baseH = twoPiece ? H * BM_BASE_HEIGHT_FRACTION : H;
 
     const pivot = new THREE.Group();
-    const trays = [];
+    let base = null;
+    let lid = null;
+    let flapBox = null;
 
-    // Base tray. Its centre panel is the floor, so it sits at the bottom.
-    const base = bmBuildTray(L * u, W * u, baseH * u, hex, null, null, 1, {
-        L: (L + gap) * u, W: (W + gap) * u,
-    });
-    base.group.position.y = -H * u / 2;
-    pivot.add(base.group);
-    trays.push(base);
+    if (flapMagnetic) {
+        // One piece: tray, lid creased onto the back wall, magnet flap on the
+        // lid's front edge.
+        flapBox = bmBuildFlapBox(L * u, W * u, H * u, hex, logoImage, logoFrac);
+        pivot.add(flapBox.group);
+    } else {
+        // Base tray. Its centre panel is the floor, so it sits at the bottom.
+        base = bmBuildTray(L * u, W * u, baseH * u, hex, null, null, 1, {
+            L: (L + gap) * u, W: (W + gap) * u,
+        });
+        base.group.position.y = -H * u / 2;
+        pivot.add(base.group);
 
-    // Lid tray. Same construction, but its walls crease downward, so it only has
-    // to travel across and settle — no turning over.
-    const lid = bmBuildTray((L + gap) * u, (W + gap) * u, lidH * u, hex, logoImage, logoFrac, -1);
-    pivot.add(lid.group);
-    trays.push(lid);
+        // Lid tray. Same construction, but its walls crease downward, so it only
+        // has to travel across and settle — no turning over.
+        lid = bmBuildTray((L + gap) * u, (W + gap) * u, lidH * u, hex, logoImage, logoFrac, -1);
+        pivot.add(lid.group);
+    }
 
     scene.add(pivot);
 
@@ -1636,8 +1780,8 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const lidFlatX = ((L + gap) + 2 * lidH) * u;
     const baseFlatZ = (W + 2 * baseH) * u;
     const lidFlatZ = ((W + gap) + 2 * lidH) * u;
-    const openOffsetX = ((baseFlatX + lidFlatX) / 2) * 1.06;
-    const openOffsetZ = ((baseFlatZ + lidFlatZ) / 2) * 0.22;
+    const openOffsetX = flapMagnetic ? 0 : ((baseFlatX + lidFlatX) / 2) * 1.06;
+    const openOffsetZ = flapMagnetic ? 0 : ((baseFlatZ + lidFlatZ) / 2) * 0.22;
 
     const shadow = bmShadowPlane((L + gap) * u * 2.2, (W + gap) * u * 2.2);
     shadow.position.y = -H * u / 2 - 0.004;
@@ -1661,11 +1805,21 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const closedRadius = Math.sqrt(
         Math.pow((L + gap) * u, 2) + Math.pow(H * u, 2) + Math.pow((W + gap) * u, 2)
     ) / 2;
-    const openSpanX = openOffsetX + (baseFlatX + lidFlatX) / 2;
-    const openSpanZ = openOffsetZ + (baseFlatZ + lidFlatZ) / 2;
+    // Unfolded, a flap box is one strip: front wall, floor, back wall, lid and
+    // then the magnet flap, all in a line. It is much longer than it is wide, so
+    // framing it as two trays side by side cropped the ends off.
+    const flapFlatZ = flapMagnetic
+        ? (2 * W + 2 * H + (flapBox ? flapBox.flapDepth / u : 0)) * u
+        : 0;
+    const openSpanX = flapMagnetic
+        ? (L + 2 * H) * u
+        : openOffsetX + (baseFlatX + lidFlatX) / 2;
+    const openSpanZ = flapMagnetic
+        ? flapFlatZ
+        : openOffsetZ + (baseFlatZ + lidFlatZ) / 2;
     // The lid now rises well above the base before dropping, so the vertical
     // extent has to count toward the framing or it leaves the top of the view.
-    const openSpanY = (H * u / 2) + lidH * u * 2.0;
+    const openSpanY = flapMagnetic ? H * u : (H * u / 2) + lidH * u * 2.0;
     const openRadius = Math.sqrt(openSpanX * openSpanX + openSpanY * openSpanY + openSpanZ * openSpanZ) / 2;
 
     const distClosed = distanceFor(closedRadius);
@@ -1698,14 +1852,19 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         const travel = easeInOut(Math.min(1, moveT / TRAVEL_PART));
         const descend = easeInOut(Math.max(0, (moveT - TRAVEL_PART) / (1 - TRAVEL_PART)));
 
-        base.setFold(foldT);
-        lid.setFold(foldT);
+        if (flapMagnetic) {
+            // Every crease belongs to the one piece, so the whole fold is its own.
+            flapBox.setFold(t);
+        } else {
+            base.setFold(foldT);
+            lid.setFold(foldT);
 
-        // Across first — finished before the drop begins.
-        lid.group.position.x = openOffsetX * (1 - travel);
-        lid.group.position.z = openOffsetZ * (1 - travel);
-        // Then straight down, from the hover height to seated.
-        lid.group.position.y = (1 - descend) * (hoverY * travel) + descend * (H * u / 2);
+            // Across first — finished before the drop begins.
+            lid.group.position.x = openOffsetX * (1 - travel);
+            lid.group.position.z = openOffsetZ * (1 - travel);
+            // Then straight down, from the hover height to seated.
+            lid.group.position.y = (1 - descend) * (hoverY * travel) + descend * (H * u / 2);
+        }
 
         shadow.material.opacity = 0.25 + 0.75 * t;
         shadow.material.transparent = true;
@@ -1758,7 +1917,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
 
     // Faces belong to the lid: that is the piece the print goes on, and the base
     // is hidden once the box is shut.
-    const faceInfo = lid.faceInfo;
+    const faceInfo = flapMagnetic ? flapBox.faceInfo : lid.faceInfo;
     Object.keys(faceInfo).forEach(function (k) {
         faceInfo[k].hasLogo = Boolean(logoFrac && logoFrac.face === k);
     });
@@ -1814,12 +1973,15 @@ function bm3dUpdateLogo(placement) {
         const carries = key === want;
         // Leave a face alone if it is already blank and should stay blank.
         if (!carries && !f.hasLogo) return;
-        const old = f.material.map;
-        f.material.map = bm3dFaceTexture(
+        // A face may be printed on both of its sides — see bmPrintedPanel — and
+        // then both have to be repainted or the logo moves on one side only.
+        const mats = f.materials || [f.material];
+        const old = mats[0].map;
+        const tex = bm3dFaceTexture(
             bm3d.hex, f.w, f.h, carries ? bm3d.logoImage : null, carries ? placement : null
         );
-        f.material.needsUpdate = true;
+        mats.forEach(function (m) { m.map = tex; m.needsUpdate = true; });
         f.hasLogo = carries;
-        if (old) old.dispose();
+        if (old && old !== tex) old.dispose();
     });
 }
