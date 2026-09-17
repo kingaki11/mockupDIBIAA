@@ -657,9 +657,9 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
 
             // Non-Latin scripts used to skip the redraw entirely, because
             // gpt-image-1 corrupted them and the verifier could not read them well
-            // enough to notice. gpt-image-2 reproduces them correctly — verified
-            // across three runs on a Gujarati logo, every glyph right — so the
-            // redraw now runs for every script. The verifier still cannot read
+            // enough to notice. Every model since reproduces them correctly —
+            // verified across three runs on a Gujarati logo, every glyph right —
+            // so the redraw now runs for every script. The verifier still cannot read
             // them, so what changed is the claim made afterwards, not whether we
             // attempt it.
             const scriptIsVerifiable = !aiEnhance.hasNonLatinScript(exactText);

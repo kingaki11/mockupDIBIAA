@@ -20,25 +20,36 @@ const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 // call against $0.067 for a redraw, so verifying is close to free.
 const VERIFY_MODEL = 'gpt-4o-mini';
 
-// gpt-image-2, not gpt-image-1, and this is the single biggest quality change in
-// the whole redraw path. gpt-image-1 reinvented artwork: it returned "dbiaa" for
-// "dibiaa", swapped a box mark for a chevron, and mangled Gujarati beyond use
-// (રાણીંગા -> રાશીંગા, જવેલર્સ -> જ્બેલર્સ). gpt-image-2 reproduced all of the same
-// logos exactly — every Gujarati glyph correct across three separate runs, the
-// dibiaa wordmark intact with its box mark, Bling keeping its sparkles and rule.
+// The model matters more here than anything else in the redraw path, because the
+// failure it prevents is the model REINVENTING the artwork. gpt-image-1 returned
+// "dbiaa" for "dibiaa", swapped a box mark for a chevron, and mangled Gujarati
+// beyond use (રાણીંગા -> રાશીંગા, જવેલર્સ -> જ્બેલર્સ). Every model since has
+// reproduced the same logos exactly.
+//
+// gpt-image-2.5-sunburst, because OpenAI is retiring the transparent-background
+// preview on gpt-image-2 on 30 September 2026 and this path cannot work without
+// it — a logo on an opaque ground is not a logo you can print on a box. Of the
+// two replacements, sunburst is the one built for edits where precision matters
+// most, which is exactly this: copying a real company's logo character for
+// character. Its sibling gpt-image-2.5-flare is the same price and about twice
+// as fast, so OPENAI_IMAGE_MODEL=gpt-image-2.5-flare is a fair trade if a
+// conversion ever feels slow.
 //
 // Quality low, not medium, for the same reason the model changed: measurement.
 // Low was indistinguishable from medium on every logo tried, at roughly a
 // quarter of the price — $0.014 to $0.021 a conversion against $0.045 to $0.067
 // on gpt-image-1 medium. Better and cheaper, so there is nothing to trade off.
-const DEFAULT_MODEL = 'gpt-image-2';
-const DEFAULT_QUALITY = 'low';   // low | medium | high
+// These models also accept xhigh and max, which cost more and buy nothing here.
+const DEFAULT_MODEL = 'gpt-image-2.5-sunburst';
+const DEFAULT_QUALITY = 'low';   // low | medium | high | xhigh | max
 
-// Published per-million-token rates for gpt-image-1, used only to show an
-// estimated cost alongside the (factual) token counts the API returns.
+// Published per-million-token rates for the 2.5 image models, used only to show
+// an estimated cost alongside the (factual) token counts the API returns. Both
+// 2.5 models are cheaper than the one they replace — image output $30 against
+// $40 — so the displayed figure would have been overstated had this stayed put.
 const RATE_TEXT_INPUT_PER_M = 5;
-const RATE_IMAGE_INPUT_PER_M = 10;
-const RATE_IMAGE_OUTPUT_PER_M = 40;
+const RATE_IMAGE_INPUT_PER_M = 8;
+const RATE_IMAGE_OUTPUT_PER_M = 30;
 
 // Flat black, not the original colours. Two reasons. It is what the artwork is
 // for — single-colour printing on boxes — and it also traces far better: a gold
@@ -59,8 +70,9 @@ const PROMPT = [
     'The result must look like a clean single-colour vector version of the SAME logo, ready for printing.',
 ].join(' ');
 
-// gpt-image-1 only accepts these three sizes, so pick the one matching the
-// source's orientation rather than squashing everything into a square.
+// Pick the standard size matching the source's orientation rather than squashing
+// everything into a square. The 2.5 models accept arbitrary WIDTHxHEIGHT too,
+// but the three fixed sizes are what every logo tried here was measured on.
 function sizeForAspect(width, height) {
     const ratio = width / height;
     if (ratio > 1.2) return '1536x1024';
