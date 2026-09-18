@@ -1357,7 +1357,11 @@ function bmShadowPlane(spanX, spanZ) {
 
 function bmIsTopBottom(styleLabel) {
     const t = String(styleLabel || '').toUpperCase();
-    return t.indexOf('TOP') !== -1 && t.indexOf('BOTTOM') !== -1;
+    // A gala box shuts the same way — a separate lid dropped over a base — and
+    // its die-line is the same cross-shaped tray, so it folds by the same rules.
+    // What makes it three-part is the platform that sits inside, which is not on
+    // this drawing and does not change how the box closes.
+    return (t.indexOf('TOP') !== -1 && t.indexOf('BOTTOM') !== -1) || t.indexOf('GALA') !== -1;
 }
 
 // A flap magnetic box is one piece, not two: the lid is creased onto the top of
