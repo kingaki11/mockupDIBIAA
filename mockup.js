@@ -956,8 +956,9 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             const lidL = geo.length || 0;
             const lidW = geo.width || 0;
             const boxH = geo.height || 0;
-            const flapMagnetic = bmIsFlapMagnetic(tpl.styleLabel);
-            const twoPiece = bmIsTopBottom(tpl.styleLabel) && !flapMagnetic;
+            const sliding = bmIsSliding(tpl.styleLabel);
+            const flapMagnetic = bmIsFlapMagnetic(tpl.styleLabel) && !sliding;
+            const twoPiece = bmIsTopBottom(tpl.styleLabel) && !flapMagnetic && !sliding;
             const allow = twoPiece ? BM_LID_ALLOWANCE : 0;
             const logoWIn = wantLen;
             const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
@@ -974,19 +975,18 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 layers.boxColour || colour,
                 logoImg,
                 placement,
-                { separateLid: twoPiece, flapMagnetic: flapMagnetic }
+                { separateLid: twoPiece, flapMagnetic: flapMagnetic, sliding: sliding }
             );
-            const faceName = {
-                top: 'the lid', left: 'the left wall', right: 'the right wall',
-                front: 'the front wall', back: 'the back wall',
-            }[placement.face] || 'the lid';
+            const faceName = bmFaceName(placement.face, sliding);
             document.getElementById('bm3dMeta').textContent = (lidL && lidW)
                 ? lidL + '×' + lidW + '×' + (boxH || 0) + (geo.depthFromDie ? ' (depth read off the die-line)' : '')
                   + ' in · logo on ' + faceName + ' at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
-                  + (flapMagnetic
-                      ? ' · the lid swings over from the back and the magnet flap holds it shut'
-                      : (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : ''))
+                  + (sliding
+                      ? ' · the tray slides out of the sleeve along the ' + lidL + ' in side'
+                      : flapMagnetic
+                          ? ' · the lid swings over from the back and the magnet flap holds it shut'
+                          : (twoPiece ? ' · lid covers the base, ' + BM_LID_ALLOWANCE + ' in oversize to clear it' : ''))
                 : 'This template has no size on it, so the proportions are approximate.';
         } catch (err) {
             // A 3D failure must not cost the user the mockup they just made.
@@ -1292,6 +1292,13 @@ const BM_BASE_HEIGHT_FRACTION = 0.94;
 // How far the magnet flap reaches down the front wall. Short of the full wall,
 // because the flap has to clear the base's front edge as it swings shut.
 const BM_FLAP_DEPTH_FRACTION = 0.82;
+
+// How much smaller the tray is than the sleeve it runs in. It has to be a close
+// fit: at exactly the sleeve's size the two surfaces are coplanar and the depth
+// buffer picks between them at random, which reads as flicker down the sides,
+// but any more slack than this and the sleeve's own floor shows through the gap
+// as a bright rim around the base of the shut box.
+const BM_TRAY_CLEARANCE = 0.985;
 // Board has a thickness and a crease; nothing folded from paper has a
 // mathematically sharp corner. Rounding by a small fraction of the shortest edge
 // is most of what separates a rendered box from a rendered cube.
@@ -1358,6 +1365,15 @@ function bmIsTopBottom(styleLabel) {
 // the front wall, where the magnet holds it shut.
 function bmIsFlapMagnetic(styleLabel) {
     return /MAGNET/i.test(String(styleLabel || ''));
+}
+
+// A sliding box is a matchbox: an open-ended sleeve with a tray that slides out
+// of one end. The supplied die-line is the sleeve — four panels in a row that
+// wrap into a tube — so the drawing measures the tube, and the tray is the piece
+// that moves. Covers the handle variant too, which is the same sleeve with a
+// pull tab.
+function bmIsSliding(styleLabel) {
+    return /SLIDING/i.test(String(styleLabel || ''));
 }
 
 // Works out which panel of the die-line is which face of the folded box.
@@ -1712,6 +1728,100 @@ function bmBuildFlapBox(L, W, H, hex, logoImage, logoFrac) {
     return { group: group, setFold: setFold, faceInfo: faceInfo, flapDepth: flapDepth };
 }
 
+// A sliding box: an open-ended sleeve with a tray that runs out of one end.
+//
+// The die-line supplied is the sleeve alone — four panels in a row that wrap
+// into a tube, measured on the drawing as W, H, W, H around a length of L — so
+// the sleeve is built as a chain of hinges the way the sheet is creased: each
+// panel hangs off the far edge of the one before it, and every crease turns the
+// same quarter turn. Flat, that chain is the die-line; folded, it is the tube.
+//
+// Every sleeve panel is printed on both faces (see bmPrintedPanel), because
+// wrapping a tube puts its four panels at zero, a quarter, a half and three
+// quarters of a turn: half of them would otherwise be facing away from the
+// camera once the tube closes, showing their artwork mirrored.
+function bmBuildSlidingBox(L, W, H, hex, logoImage, logoFrac) {
+    const group = new THREE.Group();
+    const faceInfo = {};
+    const hinges = [];
+    const onFace = (key) => (logoFrac && logoFrac.face === key ? logoFrac : null);
+
+    // The chain: bottom, then up one side, across the top, and down the other.
+    // Panel sizes alternate around the tube exactly as they alternate along the
+    // sheet. The keys are the ones bmClassifyFaces hands out for a row of
+    // panels, so a logo dragged one panel along the die-line lands one panel
+    // around the tube.
+    const wrap = [
+        { key: 'front', depth: W },   // sleeve underside
+        { key: 'left', depth: H },    // side wall
+        { key: 'top', depth: W },     // the face the print goes on
+        { key: 'right', depth: H },   // far side wall
+    ];
+
+    let parent = group;
+    wrap.forEach(function (panel, i) {
+        const hinge = new THREE.Group();
+        if (i === 0) {
+            // The first panel is the floor of the tube, laid at the bottom.
+            hinge.position.set(0, -H / 2, -W / 2);
+        } else {
+            // Every later crease sits on the far edge of the panel before it.
+            // Measured from that panel's centre, which is where its group sits —
+            // a whole depth puts the crease half a panel out past the edge, and
+            // the tube never closes.
+            hinge.position.set(0, 0, wrap[i - 1].depth / 2);
+            hinges.push(hinge);
+        }
+        const texture = bm3dFaceTexture(hex, L, panel.depth, logoImage, onFace(panel.key));
+        const printed = bmPrintedPanel(L, panel.depth, texture);
+        printed.group.position.set(0, 0, panel.depth / 2);
+        hinge.add(printed.group);
+        parent.add(hinge);
+        faceInfo[panel.key] = {
+            material: printed.materials[0],
+            materials: printed.materials,
+            w: L,
+            h: panel.depth,
+            hasLogo: Boolean(onFace(panel.key)),
+        };
+        parent = printed.group;
+    });
+
+    // The tray. It carries no print — the sleeve is what you see — but it still
+    // takes the logo if one is dragged onto a panel that reads as its floor.
+    // Nearly the full length of the sleeve, so that shut, the tray's end wall
+    // stands in the mouth the way it does on a real one. Short of that you look
+    // past it at a strip of bare sleeve floor.
+    const trayL = L * 0.99;
+    const trayW = W * BM_TRAY_CLEARANCE;
+    // Short of the sleeve's inside height, so the tray's rim reads as a rim when
+    // you look into the open end rather than closing it off.
+    const trayH = H * BM_TRAY_CLEARANCE * 0.92;
+    const tray = bmBuildTray(trayL, trayW, trayH, hex, null, null, 1);
+    tray.group.position.y = -H / 2 + (H - trayH) * 0.04;
+    group.add(tray.group);
+
+    // Where the tray waits while the sleeve is still flat. It has to clear the
+    // unfolded footprint of both pieces, not the shut box — a flat sleeve is
+    // 2W + 2H across and a flat tray another W + 2H, so an offset sized to the
+    // box left the two die-lines lying on top of each other.
+    const openX = ((L + (trayL + 2 * trayH)) / 2) * 1.08;
+
+    const ease = (v) => (v < 0.5 ? 2 * v * v : 1 - Math.pow(-2 * v + 2, 2) / 2);
+    const part = (t, from, to) => Math.max(0, Math.min(1, (t - from) / (to - from)));
+
+    function setFold(t) {
+        const foldT = part(t, 0, 0.55);
+        hinges.forEach(function (h) { h.rotation.x = -(Math.PI / 2) * foldT; });
+        tray.setFold(foldT);
+        // Only once the sleeve is a tube is there anything to slide into.
+        tray.group.position.x = openX * (1 - ease(part(t, 0.55, 1)));
+    }
+
+    setFold(0);
+    return { group: group, setFold: setFold, faceInfo: faceInfo, openX: openX, trayL: trayL, trayH: trayH };
+}
+
 function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const stage = document.getElementById('bm3dStage');
     document.getElementById('bm3dPlaceholder').style.display = 'none';
@@ -1734,7 +1844,8 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
 
     const L = dims.length || 2, W = dims.width || 2, H = dims.height || 1;
     const flapMagnetic = Boolean(options.flapMagnetic);
-    const twoPiece = Boolean(options.separateLid) && !flapMagnetic;
+    const sliding = Boolean(options.sliding);
+    const twoPiece = Boolean(options.separateLid) && !flapMagnetic && !sliding;
     const gap = twoPiece ? BM_LID_ALLOWANCE : 0;
 
     const longest = Math.max(L + gap, W + gap, H);
@@ -1747,8 +1858,13 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     let base = null;
     let lid = null;
     let flapBox = null;
+    let slidingBox = null;
 
-    if (flapMagnetic) {
+    if (sliding) {
+        // Sleeve plus tray, the tray running out of one end.
+        slidingBox = bmBuildSlidingBox(L * u, W * u, H * u, hex, logoImage, logoFrac);
+        pivot.add(slidingBox.group);
+    } else if (flapMagnetic) {
         // One piece: tray, lid creased onto the back wall, magnet flap on the
         // lid's front edge.
         flapBox = bmBuildFlapBox(L * u, W * u, H * u, hex, logoImage, logoFrac);
@@ -1780,8 +1896,9 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const lidFlatX = ((L + gap) + 2 * lidH) * u;
     const baseFlatZ = (W + 2 * baseH) * u;
     const lidFlatZ = ((W + gap) + 2 * lidH) * u;
-    const openOffsetX = flapMagnetic ? 0 : ((baseFlatX + lidFlatX) / 2) * 1.06;
-    const openOffsetZ = flapMagnetic ? 0 : ((baseFlatZ + lidFlatZ) / 2) * 0.22;
+    const onePiece = flapMagnetic || sliding;
+    const openOffsetX = onePiece ? 0 : ((baseFlatX + lidFlatX) / 2) * 1.06;
+    const openOffsetZ = onePiece ? 0 : ((baseFlatZ + lidFlatZ) / 2) * 0.22;
 
     const shadow = bmShadowPlane((L + gap) * u * 2.2, (W + gap) * u * 2.2);
     shadow.position.y = -H * u / 2 - 0.004;
@@ -1811,15 +1928,23 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const flapFlatZ = flapMagnetic
         ? (2 * W + 2 * H + (flapBox ? flapBox.flapDepth / u : 0)) * u
         : 0;
-    const openSpanX = flapMagnetic
-        ? (L + 2 * H) * u
-        : openOffsetX + (baseFlatX + lidFlatX) / 2;
-    const openSpanZ = flapMagnetic
-        ? flapFlatZ
-        : openOffsetZ + (baseFlatZ + lidFlatZ) / 2;
+    // Flat, a sliding box lies to ONE side of the origin rather than straddling
+    // it: the sleeve creases away in +Z and the tray waits out in +X. Every
+    // other style is symmetric about the middle, which is why the radius below
+    // is half the span — so these two are doubled to cancel that halving, or the
+    // open state hangs off the bottom of the view.
+    const slideFlatX = slidingBox
+        ? 2 * (slidingBox.openX + (slidingBox.trayL + 2 * slidingBox.trayH) / 2)
+        : 0;
+    const openSpanX = sliding
+        ? slideFlatX
+        : (flapMagnetic ? (L + 2 * H) * u : openOffsetX + (baseFlatX + lidFlatX) / 2);
+    const openSpanZ = sliding
+        ? 2 * (1.5 * W + 2 * H) * u
+        : (flapMagnetic ? flapFlatZ : openOffsetZ + (baseFlatZ + lidFlatZ) / 2);
     // The lid now rises well above the base before dropping, so the vertical
     // extent has to count toward the framing or it leaves the top of the view.
-    const openSpanY = flapMagnetic ? H * u : (H * u / 2) + lidH * u * 2.0;
+    const openSpanY = onePiece ? H * u : (H * u / 2) + lidH * u * 2.0;
     const openRadius = Math.sqrt(openSpanX * openSpanX + openSpanY * openSpanY + openSpanZ * openSpanZ) / 2;
 
     const distClosed = distanceFor(closedRadius);
@@ -1852,7 +1977,10 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         const travel = easeInOut(Math.min(1, moveT / TRAVEL_PART));
         const descend = easeInOut(Math.max(0, (moveT - TRAVEL_PART) / (1 - TRAVEL_PART)));
 
-        if (flapMagnetic) {
+        if (sliding) {
+            // The sleeve wraps, then the tray runs in. Both are its own.
+            slidingBox.setFold(t);
+        } else if (flapMagnetic) {
             // Every crease belongs to the one piece, so the whole fold is its own.
             flapBox.setFold(t);
         } else {
@@ -1868,7 +1996,11 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
 
         shadow.material.opacity = 0.25 + 0.75 * t;
         shadow.material.transparent = true;
-        placeCamera(t);
+        // The camera closes in as the box does. On a sliding box that is the
+        // tray's journey, not the slider's: the sleeve is folded and the tray
+        // still right out at the halfway mark, so following the slider pulled
+        // the view in while there was still a tray's length outside it.
+        placeCamera(sliding ? easeInOut(Math.max(0, Math.min(1, (t - 0.55) / 0.45))) : t);
     }
 
     let auto = true;
@@ -1917,7 +2049,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
 
     // Faces belong to the lid: that is the piece the print goes on, and the base
     // is hidden once the box is shut.
-    const faceInfo = flapMagnetic ? flapBox.faceInfo : lid.faceInfo;
+    const faceInfo = sliding ? slidingBox.faceInfo : (flapMagnetic ? flapBox.faceInfo : lid.faceInfo);
     Object.keys(faceInfo).forEach(function (k) {
         faceInfo[k].hasLogo = Boolean(logoFrac && logoFrac.face === k);
     });
@@ -1926,7 +2058,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         renderer, scene, camera, pivot, meshes, frame: 0, observer,
         setFold,
         faceInfo,
-        hex, logoImage,
+        hex, logoImage, sliding,
     };
 
     setFold(bm3dFoldValue());
@@ -1953,10 +2085,7 @@ function bm3dSyncFromCanvas() {
     // Say which face it landed on, so moving across a fold line is confirmed in
     // words as well as in the picture.
     const meta = document.getElementById('bm3dMeta');
-    const faceName = {
-        top: 'the lid', left: 'the left wall', right: 'the right wall',
-        front: 'the front wall', back: 'the back wall',
-    }[placement.face];
+    const faceName = bmFaceName(placement.face, bm3d.sliding);
     if (meta && faceName) meta.textContent = meta.textContent.replace(/logo on [a-z ]+ at/, 'logo on ' + faceName + ' at');
 }
 
@@ -1964,9 +2093,28 @@ function bm3dSyncFromCanvas() {
 // across a fold line on the flat mockup moves it onto the matching wall here.
 // Only the affected materials are touched — rebuilding the scene per pointer
 // move would throw away the angle the box had been turned to.
+// A sliding box has no lid — the printed panel is the top of the sleeve.
+function bmFaceName(face, sliding) {
+    if (sliding) {
+        return {
+            top: 'the sleeve top', left: 'the left wall', right: 'the right wall',
+            front: 'the sleeve underside', back: 'the sleeve top',
+        }[face] || 'the sleeve top';
+    }
+    return {
+        top: 'the lid', left: 'the left wall', right: 'the right wall',
+        front: 'the front wall', back: 'the back wall',
+    }[face] || 'the lid';
+}
+
 function bm3dUpdateLogo(placement) {
     if (!bm3d || !bm3d.faceInfo) return;
-    const want = (placement && placement.face) || 'top';
+    // A die-line panel can classify as a face the folded box has no counterpart
+    // for — a sliding sleeve is a tube of four panels, so a logo dropped on a
+    // dust flap reads as 'back' and there is no back. Fall back to the printed
+    // face rather than letting the logo vanish from the preview.
+    const asked = (placement && placement.face) || 'top';
+    const want = bm3d.faceInfo[asked] ? asked : 'top';
     Object.keys(bm3d.faceInfo).forEach(function (key) {
         const f = bm3d.faceInfo[key];
         if (!f) return;
