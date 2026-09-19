@@ -900,23 +900,33 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         const startX = lidPanel ? lidPanel.cx : (region.left + region.right) / 2;
         const startY = lidPanel ? lidPanel.cy : (region.top + region.bottom) / 2;
 
-        fabric.Image.fromURL(coloured, function (obj) {
-            obj.set({
-                left: startX * scale,
-                top: startY * scale,
-                originX: 'center',
-                originY: 'center',
-                scaleX: targetW / bmLogoNatural.w,
-                scaleY: targetH / bmLogoNatural.h,
-                cornerColor: '#2563eb',
-                borderColor: '#2563eb',
-                transparentCorners: false,
+        // Waited for, not fired and forgotten. fabric.Image.fromURL is
+        // asynchronous, and everything below reads bmLogoObject to work out
+        // where the logo sits — so left to race, the 3D was built from whatever
+        // the LAST run had left behind, and only came right when you touched the
+        // logo and the live sync recomputed it.
+        bmLogoObject = null;
+        const logoObj = await new Promise(function (resolve, reject) {
+            fabric.Image.fromURL(coloured, function (obj) {
+                if (obj) resolve(obj);
+                else reject(new Error('The cleaned-up logo could not be loaded.'));
             });
-            bmLogoObject = obj;
-            bmCanvas.add(obj);
-            bmCanvas.setActiveObject(obj);
-            bmCanvas.renderAll();
         });
+        logoObj.set({
+            left: startX * scale,
+            top: startY * scale,
+            originX: 'center',
+            originY: 'center',
+            scaleX: targetW / bmLogoNatural.w,
+            scaleY: targetH / bmLogoNatural.h,
+            cornerColor: '#2563eb',
+            borderColor: '#2563eb',
+            transparentCorners: false,
+        });
+        bmLogoObject = logoObj;
+        bmCanvas.add(logoObj);
+        bmCanvas.setActiveObject(logoObj);
+        bmCanvas.renderAll();
 
         const printRgb = colorMap[(printing || '').toLowerCase()];
         bmLastRender = {
@@ -1859,6 +1869,9 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
     const baseH = twoPiece ? H * BM_BASE_HEIGHT_FRACTION : H;
 
     const pivot = new THREE.Group();
+    // How much each 3D face has to shrink the die-line's fraction by, per face.
+    // Empty for every style whose faces are the die panels at their own size.
+    const faceFit = {};
     let base = null;
     let lid = null;
     let flapBox = null;
@@ -1883,7 +1896,25 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
 
         // Lid tray. Same construction, but its walls crease downward, so it only
         // has to travel across and settle — no turning over.
-        lid = bmBuildTray((L + gap) * u, (W + gap) * u, lidH * u, hex, logoImage, logoFrac, -1);
+        //
+        // Its faces are the die panels plus the allowance, so the logo has to be
+        // rescaled onto them or it comes out oversize by exactly that allowance.
+        // Which of a face's two sides was widened depends on the face: the lid's
+        // top gained it both ways, its end walls only across, its side walls only
+        // along.
+        if (gap > 0) {
+            const gx = L / (L + gap);
+            const gy = W / (W + gap);
+            faceFit.top = { sx: gx, sy: gy };
+            faceFit.left = { sx: 1, sy: gy };
+            faceFit.right = { sx: 1, sy: gy };
+            faceFit.front = { sx: gx, sy: 1 };
+            faceFit.back = { sx: gx, sy: 1 };
+        }
+        lid = bmBuildTray(
+            (L + gap) * u, (W + gap) * u, lidH * u, hex, logoImage,
+            bmFitFracToFace(logoFrac, logoFrac && faceFit[logoFrac.face]), -1
+        );
         pivot.add(lid.group);
     }
 
@@ -2062,7 +2093,7 @@ function bmRender3D(dims, hex, logoImage, logoFrac, opts) {
         renderer, scene, camera, pivot, meshes, frame: 0, observer,
         setFold,
         faceInfo,
-        hex, logoImage, sliding,
+        hex, logoImage, sliding, faceFit,
     };
 
     setFold(bm3dFoldValue());
@@ -2111,6 +2142,32 @@ function bmFaceName(face, sliding) {
     }[face] || 'the lid';
 }
 
+// A logo is placed as a fraction of the die-line panel, and that panel is the
+// box's true face. A lid, though, is cut oversize so it can clear the base — a
+// quarter inch on every side — so its faces are larger than the panels they are
+// printed from. Painting the fraction straight onto one stretches the artwork by
+// the whole allowance: on a 2in box a logo asked for at 1.00in came out at
+// 1.125in, and the caption underneath claimed 1.00 while the picture showed
+// otherwise. Rescaling the fraction through the two real sizes puts the logo
+// back at the size that was typed in.
+//
+// Only a two-piece box has an allowance at all, so for every other style both
+// factors are 1 and this returns the fraction untouched.
+function bmFitFracToFace(frac, fit) {
+    if (!frac || !fit) return frac;
+    const sx = fit.sx || 1;
+    const sy = fit.sy || 1;
+    if (sx === 1 && sy === 1) return frac;
+    return {
+        face: frac.face,
+        w: frac.w * sx,
+        h: frac.h * sy,
+        x: (frac.x || 0) * sx,
+        y: (frac.y || 0) * sy,
+        angle: frac.angle || 0,
+    };
+}
+
 function bm3dUpdateLogo(placement) {
     if (!bm3d || !bm3d.faceInfo) return;
     // A die-line panel can classify as a face the folded box has no counterpart
@@ -2129,8 +2186,11 @@ function bm3dUpdateLogo(placement) {
         // then both have to be repainted or the logo moves on one side only.
         const mats = f.materials || [f.material];
         const old = mats[0].map;
+        const fitted = carries
+            ? bmFitFracToFace(placement, (bm3d.faceFit || {})[want])
+            : null;
         const tex = bm3dFaceTexture(
-            bm3d.hex, f.w, f.h, carries ? bm3d.logoImage : null, carries ? placement : null
+            bm3d.hex, f.w, f.h, carries ? bm3d.logoImage : null, fitted
         );
         mats.forEach(function (m) { m.map = tex; m.needsUpdate = true; });
         f.hasLogo = carries;
