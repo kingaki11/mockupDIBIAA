@@ -1304,15 +1304,29 @@ function traceLayer(buffer, fill) {
     });
 }
 
+// Repaints a traced monochrome logo in the printing ink. The Convert pipeline
+// traces in black because that is what it redraws in; the die it is going onto
+// may be printed in anything.
+function recolourTrace(inner, fill) {
+    return inner
+        .replace(/fill="(?!none")[^"]*"/gi, `fill="${fill}"`)
+        .replace(/fill:\s*(?!none)[^;"']+/gi, `fill:${fill}`);
+}
+
 app.post('/api/mockup/svg', requireAdmin, upload.fields([
     { name: 'panelMask', maxCount: 1 },
     { name: 'inkMask', maxCount: 1 },
     { name: 'logo', maxCount: 1 },
+    { name: 'logoSvg', maxCount: 1 },
 ]), async (req, res) => {
     const files = req.files || {};
     const panelMask = files.panelMask && files.panelMask[0];
     const inkMask = files.inkMask && files.inkMask[0];
     const logo = files.logo && files.logo[0];
+    // A trace the Convert pipeline already produced. Sent as a file rather than
+    // a form field because a detailed logo runs to hundreds of kilobytes, well
+    // past the default field limit.
+    const logoSvgFile = files.logoSvg && files.logoSvg[0];
 
     if (!panelMask || !inkMask) {
         return res.status(400).json({ error: 'panelMask and inkMask are both required.' });
@@ -1344,7 +1358,19 @@ app.post('/api/mockup/svg', requireAdmin, upload.fields([
             let viewW = logoImage.bitmap.width;
             let viewH = logoImage.bitmap.height;
 
-            if (printColor) {
+            // Prefer a trace that has already been made properly. The Convert
+            // pipeline cleans the artwork, builds a mask from it and only then
+            // traces, which is a far better job than re-tracing the placed
+            // bitmap here — and it is the same trace the Convert tab hands out,
+            // so the logo on the box and the logo on its own are one file.
+            const ready = logoSvgFile ? logoSvgFile.buffer.toString('utf8') : '';
+            const readyBox = ready && /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(ready);
+            if (readyBox) {
+                inner = svgInner(ready);
+                viewW = parseFloat(readyBox[1]);
+                viewH = parseFloat(readyBox[2]);
+                if (printColor) inner = recolourTrace(inner, printColor);
+            } else if (printColor) {
                 // Single ink: potrace gives one clean silhouette per shape.
                 const flat = await flattenOntoWhite(logoImage);
                 inner = await traceLayer(flat, printColor);

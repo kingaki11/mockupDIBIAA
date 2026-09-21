@@ -1445,6 +1445,18 @@ h2 {
 
 .admin-panel .bm-lock input { flex: none; width: auto; margin: 0; }
 
+/* The line under a checkbox that explains what turning it on will do. Indented
+   to the checkbox's label so it reads as belonging to it. */
+.admin-panel .bm-note {
+    margin: 6px 0 0 24px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+}
+
 /* Colour picker: a named dropdown with the colour shown beside the name. */
 
 .bm-select-chip { position: relative; }

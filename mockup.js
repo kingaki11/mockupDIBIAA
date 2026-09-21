@@ -54,6 +54,8 @@ let bmExportMultiplier = 1;
 // recolour worked from, so the SVG cannot disagree with the picture on screen.
 let bmLastRender = null;
 let bmLogoSource = null;      // recoloured logo PNG, reused by the vector export
+let bmLogoVector = null;      // the Convert pipeline's own trace of this logo
+let bmLogoAiNote = '';        // what the redraw did, for the line under the mockup
 let bm3dContext = null;       // geometry the live logo update needs
 
 function bmHex(hex) {
@@ -633,6 +635,8 @@ function bmAcceptLogo(file) {
     }
     bmLogoFile = file;
     bmLogoUrl = null;               // force a fresh cutout for the new file
+    bmLogoVector = null;
+    bmLogoAiNote = '';
     bmDrop.classList.add('has-file');
     bmDrop.querySelector('.dropzone-text').innerHTML = '<strong>' + file.name + '</strong>';
     bmDrop.querySelector('.dropzone-sub').textContent = (file.size / 1048576).toFixed(2) + ' MB — click to choose another';
@@ -676,6 +680,47 @@ async function bmCutoutLogo(file) {
         img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Could not read the cut-out logo.')); };
         img.src = url;
     });
+}
+
+// Runs the logo through the Convert pipeline rather than the plain background
+// remover. That pipeline redraws the artwork as clean solid shapes, builds a
+// mask from the result and only then traces it — which is a far better job than
+// tracing the edges of whatever was uploaded, and it hands back both halves of
+// what the Mockup tab needs: a clean picture to place, and the trace to put in
+// the SVG download. The two are then the same artwork, not two attempts at it.
+async function bmCleanLogoWithAi(file) {
+    const form = new FormData();
+    form.append('image', file);
+    form.append('enhance', 'true');
+    form.append('removeBackground', 'true');
+
+    const res = await fetch(BACKEND_URL + '/api/convert/svg', {
+        method: 'POST',
+        headers: { 'x-admin-password': sessionStorage.getItem('dashboardAdminPassword') || '' },
+        body: form,
+    });
+    if (!res.ok) {
+        let detail = '';
+        try { detail = (await res.json()).error || ''; } catch (e) { /* status alone */ }
+        throw new Error(detail || ('The AI redraw failed (' + res.status + ').'));
+    }
+    const data = await res.json();
+    const meta = data.meta || {};
+    if (!data.enhancedPng) {
+        // The trace still came back, but of the original — so say so rather than
+        // letting it pass for a redraw.
+        const err = new Error(meta.aiEnhanceError || 'the AI redraw was skipped');
+        err.svg = data.svg || null;
+        throw err;
+    }
+    const ai = meta.aiEnhance || {};
+    return {
+        png: data.enhancedPng,
+        svg: data.svg || null,
+        note: 'AI redraw'
+            + (ai.estimatedCostUsd != null ? ' (~$' + ai.estimatedCostUsd.toFixed(3) + ')' : '')
+            + (ai.verified ? ' · wording checked' : ''),
+    };
 }
 
 // Applies the printing colour, exactly as the Create Mockup tab does: pixels
@@ -786,7 +831,29 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
     showAdminMsg(msg, 'Removing the logo background and placing it…', false);
 
     try {
-        if (!bmLogoUrl) bmLogoUrl = await bmCutoutLogo(bmLogoFile);
+        const wantAi = document.getElementById('bmAiClean').checked;
+        if (!bmLogoUrl) {
+            if (wantAi) {
+                showAdminMsg(msg, 'Redrawing the logo with AI and tracing it…', false);
+                try {
+                    const cleaned = await bmCleanLogoWithAi(bmLogoFile);
+                    bmLogoUrl = cleaned.png;
+                    bmLogoVector = cleaned.svg;
+                    bmLogoAiNote = cleaned.note;
+                } catch (aiErr) {
+                    // A failed redraw must not cost the user their mockup. Fall
+                    // back to the plain cut-out and say what happened.
+                    console.warn('AI logo clean-up unavailable:', aiErr.message);
+                    bmLogoVector = aiErr.svg || null;
+                    bmLogoAiNote = 'AI redraw unavailable (' + aiErr.message + ')';
+                    bmLogoUrl = await bmCutoutLogo(bmLogoFile);
+                }
+            } else {
+                bmLogoVector = null;
+                bmLogoAiNote = '';
+                bmLogoUrl = await bmCutoutLogo(bmLogoFile);
+            }
+        }
         const coloured = await bmApplyPrintingColour(bmLogoUrl, printing);
         bmLogoSource = coloured;
 
@@ -954,6 +1021,8 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             tpl.styleLabel + (tpl.typeLabel ? ' · ' + tpl.typeLabel : '') + ' · ' + colourName
             + ' · ' + sizeNote
             + (dpi ? ' · ' + dpi + ' DPI' + (tpl.vector ? ' vector' : (dpi < 200 ? ' — upload the SVG die-line for print quality' : '')) : '')
+            + (bmLogoAiNote ? ' · ' + bmLogoAiNote : '')
+            + (bmLogoVector ? ' · logo traced from the redraw' : '')
             + ' · drag or resize the logo to adjust';
 
         // Fold the same box in 3D. The logo is sized as a fraction of the lid so
@@ -1068,6 +1137,12 @@ document.getElementById('bmDownloadSvg').addEventListener('click', async functio
             const w = bmLogoObject.width * bmLogoObject.scaleX;
             const h = bmLogoObject.height * bmLogoObject.scaleY;
             form.append('logo', bmDataUrlToBlob(bmLogoSource), 'logo.png');
+            // The Convert pipeline's own trace, where there is one. The backend
+            // uses it in place of re-tracing the placed bitmap, so the vector on
+            // the box is the same artwork the Convert tab would give you.
+            if (bmLogoVector) {
+                form.append('logoSvg', new Blob([bmLogoVector], { type: 'image/svg+xml' }), 'logo.svg');
+            }
             form.append('logoX', String((bmLogoObject.left - w / 2) / s));
             form.append('logoY', String((bmLogoObject.top - h / 2) / s));
             form.append('logoW', String(w / s));
@@ -1104,6 +1179,14 @@ document.getElementById('bmStyle').addEventListener('change', function () {
     bmSyncColoursToTemplate();
 });
 document.getElementById('bmType').addEventListener('change', bmSyncColoursToTemplate);
+
+// Switching the redraw on or off has to throw away the logo prepared the other
+// way, or the next Generate quietly reuses it and the setting looks ignored.
+document.getElementById('bmAiClean').addEventListener('change', function () {
+    bmLogoUrl = null;
+    bmLogoVector = null;
+    bmLogoAiNote = '';
+});
 
 document.getElementById('bmGoUpload').addEventListener('click', function () {
     const d = document.getElementById('bmTplDetails');

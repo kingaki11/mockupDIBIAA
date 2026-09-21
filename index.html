@@ -441,6 +441,13 @@
                     <input type="checkbox" id="bmKeepRatio" checked>
                     <span>Keep the logo&rsquo;s own proportions</span>
                 </label>
+                <label class="bm-lock">
+                    <input type="checkbox" id="bmAiClean">
+                    <span>Redraw with AI for an accurate trace</span>
+                </label>
+                <p id="bmAiCleanHint" class="bm-note">Recreates your logo as clean solid artwork and
+                    traces that, so the SVG download follows real edges instead of the rough ones in
+                    your upload. Takes a few seconds longer and costs about a cent.</p>
 
                 <button type="button" id="bmGenerate" class="admin-btn-primary">Generate Mockup</button>
                 <div id="bmMsg" class="admin-msg"></div>
