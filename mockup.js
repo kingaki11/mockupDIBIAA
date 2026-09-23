@@ -129,7 +129,10 @@ function bmPopulateColours() {
     const print = document.getElementById('bmPrintColor');
     const none = document.createElement('option');
     none.value = 'None';
-    none.textContent = 'None (keep logo colours)';
+    // Not "keep logo colours" any more: the artwork reaching this point has
+    // already been redrawn flat black, so there are no original colours left to
+    // keep and saying otherwise would be a promise the tab no longer keeps.
+    none.textContent = 'None (leave it black)';
     print.appendChild(none);
     Object.keys(colorMap).sort().forEach(function (key) {
         const o = document.createElement('option');
@@ -831,26 +834,25 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
     showAdminMsg(msg, 'Removing the logo background and placing it…', false);
 
     try {
-        const wantAi = document.getElementById('bmAiClean').checked;
         if (!bmLogoUrl) {
-            if (wantAi) {
-                showAdminMsg(msg, 'Redrawing the logo with AI and tracing it…', false);
-                try {
-                    const cleaned = await bmCleanLogoWithAi(bmLogoFile);
-                    bmLogoUrl = cleaned.png;
-                    bmLogoVector = cleaned.svg;
-                    bmLogoAiNote = cleaned.note;
-                } catch (aiErr) {
-                    // A failed redraw must not cost the user their mockup. Fall
-                    // back to the plain cut-out and say what happened.
-                    console.warn('AI logo clean-up unavailable:', aiErr.message);
-                    bmLogoVector = aiErr.svg || null;
-                    bmLogoAiNote = 'AI redraw unavailable (' + aiErr.message + ')';
-                    bmLogoUrl = await bmCutoutLogo(bmLogoFile);
-                }
-            } else {
-                bmLogoVector = null;
-                bmLogoAiNote = '';
+            // Always redrawn, the way the Convert Logo tab does it. A logo goes
+            // onto a box in one ink, and a photographed or gradient-filled one
+            // traces into hundreds of colour slivers that will not ungroup —
+            // which is no use to anyone opening the SVG in CorelDRAW. Redrawing
+            // it as flat solid artwork first is what makes the trace one object
+            // per shape; the printing colour is applied to that.
+            showAdminMsg(msg, 'Redrawing the logo with AI and tracing it…', false);
+            try {
+                const cleaned = await bmCleanLogoWithAi(bmLogoFile);
+                bmLogoUrl = cleaned.png;
+                bmLogoVector = cleaned.svg;
+                bmLogoAiNote = cleaned.note;
+            } catch (aiErr) {
+                // A failed redraw must not cost the user their mockup. Fall
+                // back to the plain cut-out and say what happened.
+                console.warn('AI logo clean-up unavailable:', aiErr.message);
+                bmLogoVector = aiErr.svg || null;
+                bmLogoAiNote = 'AI redraw unavailable (' + aiErr.message + ')';
                 bmLogoUrl = await bmCutoutLogo(bmLogoFile);
             }
         }
@@ -1180,13 +1182,6 @@ document.getElementById('bmStyle').addEventListener('change', function () {
 });
 document.getElementById('bmType').addEventListener('change', bmSyncColoursToTemplate);
 
-// Switching the redraw on or off has to throw away the logo prepared the other
-// way, or the next Generate quietly reuses it and the setting looks ignored.
-document.getElementById('bmAiClean').addEventListener('change', function () {
-    bmLogoUrl = null;
-    bmLogoVector = null;
-    bmLogoAiNote = '';
-});
 
 document.getElementById('bmGoUpload').addEventListener('click', function () {
     const d = document.getElementById('bmTplDetails');

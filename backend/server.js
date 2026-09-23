@@ -1370,21 +1370,17 @@ app.post('/api/mockup/svg', requireAdmin, upload.fields([
                 viewW = parseFloat(readyBox[1]);
                 viewH = parseFloat(readyBox[2]);
                 if (printColor) inner = recolourTrace(inner, printColor);
-            } else if (printColor) {
-                // Single ink: potrace gives one clean silhouette per shape.
-                const flat = await flattenOntoWhite(logoImage);
-                inner = await traceLayer(flat, printColor);
             } else {
-                // Keeping the logo's own colours needs colour clustering, which is
-                // what VTracer is for; potrace only ever produces one fill.
-                const traced = await vectorizeToSvg(
-                    await logoImage.getBufferAsync(Jimp.MIME_PNG),
-                    parseVectorizeOptions(),
-                    VTRACER_TIMEOUT_MS,
-                );
-                inner = svgInner(traced.svg);
-                const m = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(traced.svg);
-                if (m) { viewW = parseFloat(m[1]); viewH = parseFloat(m[2]); }
+                // Single ink, always. A logo goes onto a box in one colour, and
+                // potrace gives one clean silhouette per shape — which is what
+                // ungroups. Colour clustering was the alternative here, and on a
+                // gradient-filled logo it returned a hundred and seventy-odd
+                // overlapping slivers: a faithful picture, but nothing anyone
+                // could take apart in CorelDRAW. Black when no printing colour
+                // has been picked, because by this point the artwork has been
+                // redrawn flat black anyway.
+                const flat = await flattenOntoWhite(logoImage);
+                inner = await traceLayer(flat, printColor || '#000000');
             }
 
             if (inner && Number.isFinite(lx) && Number.isFinite(ly) && lw > 0 && lh > 0) {
