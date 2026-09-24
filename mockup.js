@@ -34,7 +34,24 @@ const BOX_COLOURS = [
     ['Laminate - White', '#FEFEFE'],
     ['Laminated - PINK', '#E67F9C'],
     ['Laminated - Green', '#26514E'],
+    // Metallic stocks. These are not colours a fill can reproduce — the whole
+    // point of them is the sheen, which moves across the sheet — so each one
+    // carries the actual card as an image. The hex beside it is that card's
+    // average colour, used for the swatch, for the printed vector, and wherever
+    // else a single value is the honest answer.
+    ['METALLIC GOLD', '#D6BB64', 'metallic/gold.jpg'],
+    ['METALLIC MINT', '#CCE6CF', 'metallic/mint.jpg'],
+    ['METALLIC ROSE', '#E8BBBE', 'metallic/rose.jpg'],
+    ['METALLIC PURPLE', '#533A8D', 'metallic/purple.jpg'],
+    ['METALLIC SILVER', '#ACB2B5', 'metallic/silver.jpg'],
+    ['METALLIC PEARL', '#DDE2DC', 'metallic/pearl.jpg'],
 ];
+
+// The metallic card currently selected, as pixels, or null for a flat colour.
+// Held here rather than passed through every 3D builder: one box is rendered at
+// a time, and the alternative was threading it through six call sites that have
+// no other reason to know about it.
+let bmBoxTexture = null;
 
 // Fabric writes its own pixel width/height onto the canvas elements inline, so
 // a fixed size cannot be reined in by CSS afterwards without breaking the
@@ -81,6 +98,7 @@ function bmRenderColourOptions(pairs, slugs) {
         o.value = slugs ? slugs[idx] : pair[1];
         o.textContent = pair[0];
         o.dataset.hex = pair[1];
+        if (pair[2]) o.dataset.texture = pair[2];
         sel.appendChild(o);
     });
 
@@ -104,8 +122,36 @@ function bmSyncColourChip() {
     if (!chip) return;
     const o = sel.options[sel.selectedIndex];
     const hex = o && o.dataset ? o.dataset.hex : '';
+    const texture = o && o.dataset ? o.dataset.texture : '';
     chip.style.background = hex || 'transparent';
+    // A metallic card shows as the card, not as its average — the swatch is the
+    // only place you can tell gold leaf from mustard before generating.
+    chip.style.backgroundImage = texture ? 'url("' + texture + '")' : 'none';
+    chip.style.backgroundSize = texture ? 'cover' : '';
     chip.style.display = hex ? 'block' : 'none';
+}
+
+// The chosen card's image path, if it is a metallic one.
+function bmSelectedTexture() {
+    const sel = document.getElementById('bmColor');
+    const o = sel.options[sel.selectedIndex];
+    return (o && o.dataset && o.dataset.texture) || '';
+}
+
+// The card laid across the whole sheet, as pixels. Scaled to cover rather than
+// stretched, so the grain keeps its proportions, and drawn once at the die's own
+// resolution so every panel takes its colour from the same continuous sheet —
+// which is what a real printed sheet does.
+async function bmTexturePixels(url, w, h) {
+    const img = await bmLoadImage(url);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+    const dw = img.naturalWidth * scale;
+    const dh = img.naturalHeight * scale;
+    ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    return ctx.getImageData(0, 0, w, h).data;
 }
 
 function bmColoursForTemplate(tpl) {
@@ -281,11 +327,23 @@ function bmFloodOutside(lum, w, h, grow) {
 //
 // Panels are then painted and the surrounding sheet is dropped to transparent,
 // keeping only its ink so the caption stays readable.
-function bmRecolour(sourceCanvas, hex, region) {
+function bmRecolour(sourceCanvas, hex, region, texture) {
     const w = sourceCanvas.width, h = sourceCanvas.height;
     const total = w * h;
     const [br, bg, bb] = bmHex(hex);
-    const boxLum = 0.299 * br + 0.587 * bg + 0.114 * bb;
+    // A metallic card decides the ink by its average brightness, not by any one
+    // pixel: a gold sheet runs from near-white to bronze, and reading the colour
+    // under the logo would flip the ink from light to dark as it was dragged.
+    let boxLum = 0.299 * br + 0.587 * bg + 0.114 * bb;
+    if (texture) {
+        let sum = 0, n = 0;
+        for (let p = 0; p < total; p += 97) {
+            const i = p * 4;
+            sum += 0.299 * texture[i] + 0.587 * texture[i + 1] + 0.114 * texture[i + 2];
+            n++;
+        }
+        if (n) boxLum = sum / n;
+    }
     // On a dark box, black ink on near-black card is invisible.
     const ink = boxLum < 110 ? [245, 245, 245] : [26, 26, 26];
 
@@ -393,9 +451,15 @@ function bmRecolour(sourceCanvas, hex, region) {
         const i = p * 4;
         const t = lum[p] / 255;
         if (panel[p]) {
-            d[i] = ink[0] + (br - ink[0]) * t;
-            d[i + 1] = ink[1] + (bg - ink[1]) * t;
-            d[i + 2] = ink[2] + (bb - ink[2]) * t;
+            // Flat card: one colour. Metallic: this pixel's own colour off the
+            // sheet, so the sheen runs across the panels the way it runs across
+            // the card.
+            const cr = texture ? texture[i] : br;
+            const cg = texture ? texture[i + 1] : bg;
+            const cb = texture ? texture[i + 2] : bb;
+            d[i] = ink[0] + (cr - ink[0]) * t;
+            d[i + 1] = ink[1] + (cg - ink[1]) * t;
+            d[i + 2] = ink[2] + (cb - ink[2]) * t;
             d[i + 3] = 255;
         } else {
             // Off the box: keep the ink, drop the paper.
@@ -890,9 +954,29 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         fullCtx.drawImage(tplImg, 0, 0, full.width, full.height);
 
         const region = bmArtworkRegion(full);
+
+        // A metallic card is loaded twice over: once as pixels the size of the
+        // sheet, to colour the flat die-line, and once as an image the 3D paints
+        // onto each face. A template that ships its own printed artwork has a
+        // card already and takes neither.
+        const texturePath = hasArtwork ? '' : bmSelectedTexture();
+        let texturePixels = null;
+        bmBoxTexture = null;
+        if (texturePath) {
+            try {
+                texturePixels = await bmTexturePixels(texturePath, full.width, full.height);
+                bmBoxTexture = await bmLoadImage(texturePath);
+            } catch (texErr) {
+                // Worth a mockup in the flat colour rather than no mockup.
+                console.warn('Metallic card unavailable, using its flat colour:', texErr.message);
+                texturePixels = null;
+                bmBoxTexture = null;
+            }
+        }
+
         const layers = hasArtwork
             ? bmLayersFromArtwork(full)
-            : bmRecolour(full, colour, region);
+            : bmRecolour(full, colour, region, texturePixels);
         if (!layers) throw new Error('Could not read that die-line.');
 
         // Measure the panels once here: the logo's inch scale, the quality note
@@ -1322,6 +1406,16 @@ function bm3dFaceTexture(hex, faceW, faceH, logoImage, logoFrac) {
     const ctx = c.getContext('2d');
     ctx.fillStyle = hex;
     ctx.fillRect(0, 0, c.width, c.height);
+    // On a metallic card the face is the card, not a colour. Drawn to cover so
+    // the grain is not stretched out of shape on a long face, and painted over
+    // the flat fill so a failed load still leaves a sensible box rather than a
+    // transparent one.
+    if (bmBoxTexture) {
+        const scale = Math.max(c.width / bmBoxTexture.naturalWidth, c.height / bmBoxTexture.naturalHeight);
+        const dw = bmBoxTexture.naturalWidth * scale;
+        const dh = bmBoxTexture.naturalHeight * scale;
+        ctx.drawImage(bmBoxTexture, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh);
+    }
 
     if (logoImage && logoFrac) {
         const lw = c.width * logoFrac.w;
