@@ -898,7 +898,12 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         // Measure the panels once here: the logo's inch scale, the quality note
         // and the 3D box all have to agree about how big this drawing is, and
         // deriving it twice is how they drift apart.
-        const faces = bmClassifyFaces(layers.panelBoxes);
+        const isSliding = bmIsSliding(tpl.styleLabel);
+        const isFlapMagnetic = bmIsFlapMagnetic(tpl.styleLabel) && !isSliding;
+        const faces = bmClassifyFaces(
+            layers.panelBoxes,
+            isFlapMagnetic ? bmPickFlapLid(layers.panelBoxes, region) : null
+        );
         const geo = bmDieGeometry(tpl, faces);
 
         // Reveal the result first: a hidden element measures zero wide.
@@ -1037,8 +1042,8 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             const lidL = geo.length || 0;
             const lidW = geo.width || 0;
             const boxH = geo.height || 0;
-            const sliding = bmIsSliding(tpl.styleLabel);
-            const flapMagnetic = bmIsFlapMagnetic(tpl.styleLabel) && !sliding;
+            const sliding = isSliding;
+            const flapMagnetic = isFlapMagnetic;
             const twoPiece = bmIsTopBottom(tpl.styleLabel) && !flapMagnetic && !sliding;
             const allow = twoPiece ? BM_LID_ALLOWANCE : 0;
             const logoWIn = wantLen;
@@ -1475,15 +1480,47 @@ function bmIsSliding(styleLabel) {
 // the left wall, and so on. That is the whole reason this exists — a logo
 // dragged onto a side wing has to appear on that wall in 3D, not be clamped back
 // onto the lid because the lid is the only face we bothered to map.
-function bmClassifyFaces(panelBoxes) {
+// Which panel of a flap magnetic die the print actually goes on.
+//
+// Its lid and base are the same size — they are the two faces of one box — so
+// choosing "the largest" decides between them on a rounding error, and on the
+// Earring die it chose the base, putting the logo on the underside. What tells
+// them apart is the magnet flap: the lid is the panel it hangs off, and beyond
+// that flap the drawing is cut on the diagonal, leaving no straight edge for it
+// to end on. Measured across all eleven supplied dies, the lid's outer edge
+// therefore sits 51 to 69 pixels from the end of the drawing, while the base's
+// is 180 to 230 away, behind the box's own front wall.
+function bmPickFlapLid(panelBoxes, region) {
+    if (!panelBoxes || panelBoxes.length < 2 || !region) return null;
+    const regionH = region.bottom - region.top;
+    if (!(regionH > 0)) return null;
+
+    // A panel taller than the whole drawing is two panels the fill ran
+    // together, which is no basis for choosing anything.
+    const sane = panelBoxes.filter(function (b) {
+        return b.height <= regionH && b.minY >= region.top - 1 && b.maxY <= region.bottom + 1;
+    });
+    if (sane.length < 2) return null;
+
+    const sorted = [...sane].sort(function (a, b) { return b.area - a.area; });
+    const pair = sorted.filter(function (b) { return b.area >= sorted[0].area * 0.85; });
+    if (pair.length < 2) return null;   // no matching pair, so nothing to choose between
+
+    const outerGap = (b) => Math.min(b.minY - region.top, region.bottom - b.maxY);
+    return pair.reduce(function (best, b) { return outerGap(b) < outerGap(best) ? b : best; });
+}
+
+// `mainPanel` names the panel the print goes on, for the dies where that is not
+// simply the biggest one. Everything else is read off its edges as before.
+function bmClassifyFaces(panelBoxes, mainPanel) {
     if (!panelBoxes || !panelBoxes.length) return null;
     const sorted = [...panelBoxes].sort(function (a, b) { return b.area - a.area; });
-    const main = sorted[0];
+    const main = mainPanel || sorted[0];
     const faces = { top: main, left: null, right: null, front: null, back: null };
 
     const overlaps = (a1, a2, b1, b2) => Math.min(a2, b2) - Math.max(a1, b1) > 0;
 
-    sorted.slice(1).forEach(function (b) {
+    sorted.filter(function (b) { return b !== main; }).forEach(function (b) {
         const dx = b.cx - main.cx;
         const dy = b.cy - main.cy;
         if (Math.abs(dx) > Math.abs(dy)) {
