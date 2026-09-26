@@ -64,6 +64,7 @@ let bmTemplates = [];
 let bmLogoFile = null;
 let bmLogoUrl = null;            // background-removed logo, as a data URL
 let bmLogoNatural = { w: 0, h: 0 };
+let bmLogoAspect = 0;            // height over width of the artwork itself
 let bmCanvas = null;
 let bmLogoObject = null;
 let bmExportMultiplier = 1;
@@ -716,6 +717,12 @@ function bmAcceptLogo(file) {
     bmLogoUrl = null;               // force a fresh cutout for the new file
     bmLogoVector = null;
     bmLogoAiNote = '';
+    bmLogoAspect = 0;
+    bmReadAspect(file).then(function (aspect) {
+        if (bmLogoFile !== file) return;   // a newer upload has replaced this one
+        bmLogoAspect = aspect;
+        bmSyncLinkedSize('length');
+    });
     bmDrop.classList.add('has-file');
     bmDrop.querySelector('.dropzone-text').innerHTML = '<strong>' + file.name + '</strong>';
     bmDrop.querySelector('.dropzone-sub').textContent = (file.size / 1048576).toFixed(2) + ' MB — click to choose another';
@@ -794,12 +801,91 @@ async function bmCleanLogoWithAi(file) {
     }
     const ai = meta.aiEnhance || {};
     return {
-        png: data.enhancedPng,
+        png: await bmTrimDataUrl(data.enhancedPng),
         svg: data.svg || null,
         note: 'AI redraw'
             + (ai.estimatedCostUsd != null ? ' (~$' + ai.estimatedCostUsd.toFixed(3) + ')' : '')
             + (ai.verified ? ' · wording checked' : ''),
     };
+}
+
+// Trims a data-URL image to its visible artwork. The AI redraw comes back on a
+// fixed 1536x1024 (or 1024x1536) sheet with the logo somewhere inside it, so
+// placing that sheet at "1 inch" made the artwork inside it smaller than an
+// inch — the cut-out path was already trimmed this way, the redraw path was not.
+function bmTrimDataUrl(dataUrl) {
+    return new Promise(function (resolve, reject) {
+        const img = new Image();
+        img.onload = function () {
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth; c.height = img.naturalHeight;
+            c.getContext('2d').drawImage(img, 0, 0);
+            try { resolve(trimCanvasToVisibleBounds(c)); }   // from boxscript.js
+            catch (e) { resolve(dataUrl); }
+        };
+        img.onerror = function () { reject(new Error('Could not read the redrawn logo.')); };
+        img.src = dataUrl;
+    });
+}
+
+// A first reading of the logo's proportions, straight off the upload, so the
+// breadth box can follow the length box before anything has been generated.
+// Corrected from the placed artwork once a mockup exists.
+function bmReadAspect(file) {
+    return new Promise(function (resolve) {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = function () {
+            URL.revokeObjectURL(url);
+            resolve(img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 0);
+        };
+        img.onerror = function () { URL.revokeObjectURL(url); resolve(0); };
+        img.src = url;
+    });
+}
+
+// The two size boxes behave like CorelDRAW's with the lock on: edit one and the
+// other follows, so together they always describe a shape the logo can actually
+// take. With the lock off they are independent, and the logo is stretched to fit.
+function bmSyncLinkedSize(from) {
+    if (!document.getElementById('bmKeepRatio').checked || !(bmLogoAspect > 0)) return;
+    const len = document.getElementById('bmLogoLength');
+    const bre = document.getElementById('bmLogoBreadth');
+    const round2 = (v) => Math.round(v * 100) / 100;
+    if (from === 'breadth') {
+        const b = parseFloat(bre.value);
+        if (b > 0) len.value = round2(b / bmLogoAspect);
+    } else {
+        const l = parseFloat(len.value);
+        if (l > 0) bre.value = round2(l * bmLogoAspect);
+    }
+}
+
+// Writes the logo's real printed size into the boxes, in inches on the die.
+function bmShowPlacedSize(wIn, hIn) {
+    const round2 = (v) => Math.round(v * 100) / 100;
+    if (wIn > 0) document.getElementById('bmLogoLength').value = round2(wIn);
+    if (hIn > 0) document.getElementById('bmLogoBreadth').value = round2(hIn);
+}
+
+// Reads the size back off the canvas after a drag-resize, so the boxes keep
+// telling the truth rather than the number that was typed before the resize.
+function bmFieldsFromCanvas() {
+    if (!bmLogoObject || !bmLastRender || !(bmLastRender.ppi > 0)) return;
+    const s = bmLastRender.scale;
+    const wIn = (bmLogoObject.width * bmLogoObject.scaleX / s) / bmLastRender.ppi;
+    const hIn = (bmLogoObject.height * bmLogoObject.scaleY / s) / bmLastRender.ppi;
+    bmShowPlacedSize(wIn, hIn);
+}
+
+// With the lock on, the canvas is locked too: only the corner handles remain,
+// and those scale both ways together. The side handles are what stretch a
+// logo out of shape.
+function bmApplyProportionLock() {
+    if (!bmLogoObject) return;
+    const locked = document.getElementById('bmKeepRatio').checked;
+    bmLogoObject.setControlsVisibility({ ml: !locked, mr: !locked, mt: !locked, mb: !locked });
+    if (bmCanvas) bmCanvas.requestRenderAll();
 }
 
 // Applies the printing colour, exactly as the Create Mockup tab does: pixels
@@ -1031,8 +1117,10 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             };
             bmCanvas.on('object:moving', follow);
             bmCanvas.on('object:scaling', follow);
+            bmCanvas.on('object:scaling', bmFieldsFromCanvas);
             bmCanvas.on('object:rotating', follow);
             bmCanvas.on('object:modified', bm3dSyncFromCanvas);
+            bmCanvas.on('object:modified', bmFieldsFromCanvas);
         }
         bmCanvas.clear();
         bmCanvas.setDimensions({ width: dispW, height: dispH });
@@ -1042,6 +1130,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
 
         const logoImg = await bmLoadImage(coloured);
         bmLogoNatural = { w: logoImg.naturalWidth, h: logoImg.naturalHeight };
+        if (bmLogoNatural.w > 0) bmLogoAspect = bmLogoNatural.h / bmLogoNatural.w;
 
         // The panel measures the box's own footprint, so it converts inches to
         // pixels exactly. Dividing the whole sheet by the length instead — the
@@ -1049,7 +1138,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         // on a depth-less name like "8x9" made a 1in logo 40% too big.
         const ppi = geo.pxPerIn || bmPixelsPerInch(tpl, region);
         let targetW;
-        let sizeNote;
+        let sizeNote;   // reassigned once the placed breadth is known
         if (ppi) {
             targetW = wantLen * ppi * scale;
             sizeNote = wantLen + '×' + wantBre + ' in at ' + ppi.toFixed(0) + ' px/in';
@@ -1063,6 +1152,12 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         const targetH = keepRatio
             ? targetW * (bmLogoNatural.h / bmLogoNatural.w)
             : wantBre * (ppi || 1) * scale;
+        // What the breadth really is once placed. With the lock on it follows
+        // the artwork, whatever the box said.
+        const placedBre = keepRatio
+            ? Math.round(wantLen * (bmLogoNatural.h / bmLogoNatural.w) * 100) / 100
+            : wantBre;
+        if (ppi) sizeNote = wantLen + '×' + placedBre + ' in at ' + ppi.toFixed(0) + ' px/in';
 
         // Start the logo on the panel the print goes on. The middle of the sheet
         // is only the middle of the lid on a cross-shaped tray die; a flap
@@ -1098,6 +1193,8 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
         bmLogoObject = logoObj;
         bmCanvas.add(logoObj);
         bmCanvas.setActiveObject(logoObj);
+        bmApplyProportionLock();
+        bmShowPlacedSize(wantLen, placedBre);
         bmCanvas.renderAll();
 
         const printRgb = colorMap[(printing || '').toLowerCase()];
@@ -1112,6 +1209,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 ? '#' + printRgb.map(function (n) { return n.toString(16).padStart(2, '0'); }).join('')
                 : null,
             scale: scale,
+            ppi: ppi || 0,
             // Recorded as the mockup was made, not read back off the form when
             // the download is clicked — the dropdowns can be changed afterwards,
             // and a caption that disagreed with the drawing above it would be
@@ -1155,7 +1253,7 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             const twoPiece = bmIsTopBottom(tpl.styleLabel) && !flapMagnetic && !sliding;
             const allow = twoPiece ? BM_LID_ALLOWANCE : 0;
             const logoWIn = wantLen;
-            const logoHIn = keepRatio ? wantLen * (bmLogoNatural.h / bmLogoNatural.w) : wantBre;
+            const logoHIn = placedBre;
 
             // Everything the live position update needs, so dragging the logo does
             // not have to re-derive the geometry. The panel map is the important
@@ -1340,6 +1438,13 @@ document.getElementById('bmStyle').addEventListener('change', function () {
     bmSyncColoursToTemplate();
 });
 document.getElementById('bmType').addEventListener('change', bmSyncColoursToTemplate);
+
+document.getElementById('bmLogoLength').addEventListener('input', function () { bmSyncLinkedSize('length'); });
+document.getElementById('bmLogoBreadth').addEventListener('input', function () { bmSyncLinkedSize('breadth'); });
+document.getElementById('bmKeepRatio').addEventListener('change', function () {
+    bmSyncLinkedSize('length');
+    bmApplyProportionLock();
+});
 
 
 document.getElementById('bmGoUpload').addEventListener('click', function () {
