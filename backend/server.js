@@ -1247,6 +1247,37 @@ app.post('/admin/box-template-color', requireAdmin, upload.single('template'), a
     }
 });
 
+// Renames a template without moving it. The id is derived from the labels when
+// a template is first created, but it is also the folder its colour artwork
+// lives in — nine of these carry twenty-one printed colours each — so renaming
+// by re-uploading would mean re-sending a hundred and eighty-nine files to land
+// them under a new id. The id stays as it is and only what the picker shows,
+// and the dimensions read off the size, change.
+app.post('/admin/box-template-labels', requireAdmin, express.json(), (req, res) => {
+    const body = req.body || {};
+    const id = String(body.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'id is required.' });
+
+    const catalog = catalogStore.readCatalog();
+    catalog.boxTemplates = catalog.boxTemplates || [];
+    const tpl = catalog.boxTemplates.find((t) => t.id === id);
+    if (!tpl) return res.status(404).json({ error: 'No template with that id.' });
+
+    ['styleLabel', 'typeLabel', 'sizeLabel'].forEach((field) => {
+        if (typeof body[field] === 'string' && body[field].trim()) {
+            tpl[field] = body[field].trim();
+        }
+    });
+
+    const dims = aiEnhance.parseBoxSize(tpl.sizeLabel);
+    tpl.length = dims ? dims.length : null;
+    tpl.width = dims ? dims.width : null;
+    tpl.height = dims ? dims.height : null;
+
+    catalogStore.writeCatalog(catalog);
+    res.json({ template: tpl });
+});
+
 app.delete('/admin/box-template/:id', requireAdmin, (req, res) => {
     const catalog = catalogStore.readCatalog();
     catalog.boxTemplates = catalog.boxTemplates || [];

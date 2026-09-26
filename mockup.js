@@ -1000,7 +1000,9 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             layers.panelBoxes,
             isFlapMagnetic ? bmPickFlapLid(layers.panelBoxes, region) : null
         );
-        const geo = bmDieGeometry(tpl, faces);
+        // Only a tray die's centre panel is the box's own footprint; see
+        // bmDieGeometry.
+        const geo = bmDieGeometry(tpl, faces, bmIsTopBottom(tpl.styleLabel) && !isFlapMagnetic && !isSliding);
 
         // Reveal the result first: a hidden element measures zero wide.
         document.getElementById('bmPlaceholder').style.display = 'none';
@@ -1171,7 +1173,9 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             );
             const faceName = bmFaceName(placement.face, sliding);
             document.getElementById('bm3dMeta').textContent = (lidL && lidW)
-                ? lidL + '×' + lidW + '×' + (boxH || 0) + (geo.depthFromDie ? ' (depth read off the die-line)' : '')
+                ? lidL + '×' + lidW + '×' + (boxH || 0)
+                  + (geo.depthFromDie ? ' (depth read off the die-line)' : '')
+                  + (geo.shapeFromDie ? ' (shape read off the die-line)' : '')
                   + ' in · logo on ' + faceName + ' at '
                   + logoWIn.toFixed(2) + '×' + logoHIn.toFixed(2) + ' in'
                   + (sliding
@@ -1710,7 +1714,14 @@ function bmClassifyFaces(panelBoxes, mainPanel) {
 // The name still fixes the absolute scale: its larger footprint number is
 // matched to the panel's longer edge, so an "11x2" box is still eleven inches
 // long. Only the proportions come from the drawing.
-function bmDieGeometry(tpl, faces) {
+// `trustDrawingOverName` says whether this die's main panel is a faithful record
+// of the box's footprint. On a top-bottom tray it is — the centre panel IS the
+// lid, and seven of the nine supplied sizes match their name to within 1.5%. On
+// a flap magnetic or sliding die it is not: the panel is one of several in a
+// strip and is cut short where the next crease falls, so the Ring Box's lid
+// panel measures 1.13:1 on a box that really is square. Checking the name
+// against a panel like that would reject a name that is perfectly correct.
+function bmDieGeometry(tpl, faces, trustDrawingOverName) {
     const namedL = (tpl && tpl.length) || 0;
     const namedW = (tpl && tpl.width) || 0;
     const namedH = (tpl && tpl.height) || 0;
@@ -1724,12 +1735,28 @@ function bmDieGeometry(tpl, faces) {
     const pxPerIn = Math.max(top.width, top.height) / anchorIn;
     const round = function (v) { return Math.round(v * 100) / 100; };
 
-    // A caption that spells out all three dimensions is better evidence than the
-    // drawing: the flap magnetic dies carry "BOX SIZE - 2X2X1.5" in print, and
-    // their panels are cut a little over that for the board to wrap. Only the
-    // orientation is taken from the drawing — a die laid out landscape must fold
-    // to a landscape box, whichever way round the caption lists the two numbers.
-    if (namedL > 0 && namedW > 0 && namedH > 0) {
+    // A name that spells out all three dimensions is usually better evidence
+    // than the drawing: a die's panels are cut a little over size for the board
+    // to wrap, so measuring them puts the footprint out by a percent or two.
+    //
+    // Usually, but not always — so it is checked rather than assumed. The logo
+    // is positioned as a fraction of the die's panel, so if the box is built to
+    // a footprint that panel does not have, the logo is stretched by whatever
+    // the difference is. Measured across the supplied dies, seven of the nine
+    // top-bottom sizes match their name to within 1.5%, while "11x2" is drawn at
+    // 4.09:1 against the 5.5:1 its name claims and "9x2" at 4.03:1 against 4.5:1.
+    // Those two keep the drawing's own footprint; the rest take the name's.
+    //
+    // The DEPTH comes from the name either way. A top-bottom die cannot show it:
+    // its walls are cut shorter than the assembled box is deep, so every one of
+    // these measured around 0.98in whether the box was 1in deep or 1.5in.
+    const namedAspect = (namedL > 0 && namedW > 0)
+        ? Math.max(namedL, namedW) / Math.min(namedL, namedW) : 0;
+    const dieAspect = Math.max(top.width, top.height) / Math.min(top.width, top.height);
+    const nameFitsDrawing = !trustDrawingOverName
+        || (namedAspect > 0 && Math.abs(namedAspect - dieAspect) / dieAspect <= 0.08);
+
+    if (namedL > 0 && namedW > 0 && namedH > 0 && nameFitsDrawing) {
         const longSide = Math.max(namedL, namedW);
         const shortSide = Math.min(namedL, namedW);
         const wide = top.width >= top.height;
@@ -1762,7 +1789,10 @@ function bmDieGeometry(tpl, faces) {
         height: namedH || (wallPx ? round(wallPx / pxPerIn) : 0),
         pxPerIn: pxPerIn,
         fromDie: true,
+        // Only worth saying when the drawing is where the depth came from.
         depthFromDie: !namedH && wallPx > 0,
+        // Worth saying when the box is not the shape its name claims.
+        shapeFromDie: namedAspect > 0 && !nameFitsDrawing,
     };
 }
 
