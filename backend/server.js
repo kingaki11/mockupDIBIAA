@@ -1304,6 +1304,24 @@ function traceLayer(buffer, fill) {
     });
 }
 
+function escapeXml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+// The caption band printed under the die-line. Left as real <text>, not traced
+// into curves, for the same reason the supplied die-lines carry theirs that way:
+// it is a note to whoever is printing the job, and they need to be able to read
+// and edit it. Sized against the drawing's width so it reads the same on a small
+// ring box and a large haram box.
+function captionBand(lines, width) {
+    const size = Math.max(11, Math.round(width * 0.022));
+    const lead = Math.round(size * 1.38);
+    const pad = Math.round(size * 0.9);
+    return { size, lead, pad, band: pad * 2 + lead * lines.length };
+}
+
 // Repaints a traced monochrome logo in the printing ink. The Convert pipeline
 // traces in black because that is what it redraws in; the die it is going onto
 // may be printed in anything.
@@ -1395,8 +1413,25 @@ app.post('/api/mockup/svg', requireAdmin, upload.fields([
             }
         }
 
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" `
-            + `viewBox="0 0 ${width} ${height}" version="1.1">\n${layers.join('\n')}\n</svg>`;
+        // The caption goes below the drawing, so the sheet grows to make room for
+        // it rather than the die-line being pushed up into it.
+        const caption = String(req.body.caption || '')
+            .split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 8);
+        let sheetH = height;
+        if (caption.length) {
+            const m = captionBand(caption, width);
+            sheetH = height + m.band;
+            const texts = caption.map((line, i) =>
+                `<text x="${(width / 2).toFixed(1)}" `
+                + `y="${(height + m.pad + m.lead * (i + 1) - m.lead * 0.28).toFixed(1)}" `
+                + `font-family="Helvetica, Arial, sans-serif" font-size="${m.size}" font-weight="600" `
+                + `fill="#1a1a1a" text-anchor="middle">${escapeXml(line)}</text>`
+            ).join('\n');
+            layers.push('<g id="caption">\n' + texts + '\n</g>');
+        }
+
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${sheetH}" `
+            + `viewBox="0 0 ${width} ${sheetH}" version="1.1">\n${layers.join('\n')}\n</svg>`;
         res.json({ svg });
     } catch (err) {
         console.error('Mockup vector export failed:', err);

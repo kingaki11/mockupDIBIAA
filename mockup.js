@@ -131,6 +131,18 @@ function bmSyncColourChip() {
     chip.style.display = hex ? 'block' : 'none';
 }
 
+// What the printing colour is called, as the dropdown puts it. "None (leave it
+// black)" is trimmed back to "Black" — the parenthesis is guidance for whoever
+// is choosing, not something to print on a die-line.
+function bmSelectedPrintingName() {
+    const sel = document.getElementById('bmPrintColor');
+    const o = sel.options[sel.selectedIndex];
+    const text = (o && o.textContent || '').trim();
+    if (!text || text.indexOf('--') === 0) return '-';
+    if (sel.value === 'None') return 'Black';
+    return text;
+}
+
 // The chosen card's image path, if it is a metallic one.
 function bmSelectedTexture() {
     const sel = document.getElementById('bmColor');
@@ -1098,6 +1110,16 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 ? '#' + printRgb.map(function (n) { return n.toString(16).padStart(2, '0'); }).join('')
                 : null,
             scale: scale,
+            // Recorded as the mockup was made, not read back off the form when
+            // the download is clicked — the dropdowns can be changed afterwards,
+            // and a caption that disagreed with the drawing above it would be
+            // worse than none at all.
+            caption: [
+                'Box size - ' + (tpl.sizeLabel || '-'),
+                'Box Type - ' + (tpl.typeLabel || tpl.styleLabel || '-'),
+                'Box colour - ' + (bmSelectedColourName() || colour || '-'),
+                'Printing Colour - ' + bmSelectedPrintingName(),
+            ],
         };
 
         // Quality is worth stating rather than leaving to be discovered on the
@@ -1174,16 +1196,57 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
     }
 });
 
-document.getElementById('bmDownload').addEventListener('click', function () {
+// The caption printed under every download. Sized against the drawing's own
+// width so it reads the same on a 1,500px ring box and a 5,600px haram box, and
+// set in the same dark the cut lines are drawn in — the band around the die is
+// transparent, so a light colour would vanish on white paper.
+const BM_CAPTION_SCALE = 0.022;     // of the drawing's width
+const BM_CAPTION_INK = '#1a1a1a';
+
+function bmCaptionMetrics(width, lines) {
+    const size = Math.max(11, Math.round(width * BM_CAPTION_SCALE));
+    const lead = Math.round(size * 1.38);
+    const pad = Math.round(size * 0.9);
+    return { size, lead, pad, band: pad * 2 + lead * lines.length };
+}
+
+document.getElementById('bmDownload').addEventListener('click', async function () {
     if (!bmCanvas) return;
     bmCanvas.discardActiveObject();
     bmCanvas.renderAll();
     // Export at the template's real resolution, not the on-screen size.
     const url = bmCanvas.toDataURL({ format: 'png', multiplier: bmExportMultiplier });
     const tpl = bmSelectedTemplate();
-    const name = (tpl ? tpl.id : 'mockup') + '-mockup.png';
+    const lines = (bmLastRender && bmLastRender.caption) || [];
+
+    let out = url;
+    if (lines.length) {
+        try {
+            const img = await bmLoadImage(url);
+            const m = bmCaptionMetrics(img.naturalWidth, lines);
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth;
+            c.height = img.naturalHeight + m.band;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            ctx.fillStyle = BM_CAPTION_INK;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
+            ctx.font = '600 ' + m.size + 'px Helvetica, Arial, sans-serif';
+            lines.forEach(function (line, i) {
+                ctx.fillText(line, c.width / 2, img.naturalHeight + m.pad + m.lead * (i + 1) - m.lead * 0.28);
+            });
+            out = c.toDataURL('image/png');
+        } catch (capErr) {
+            // The mockup itself is worth more than the caption under it.
+            console.warn('Caption skipped:', capErr.message);
+        }
+    }
+
     const a = document.createElement('a');
-    a.href = url; a.download = name; a.click();
+    a.href = out;
+    a.download = (tpl ? tpl.id : 'mockup') + '-mockup.png';
+    a.click();
 });
 
 // Vector export. Each layer is traced separately on the server and returned as
@@ -1220,6 +1283,9 @@ document.getElementById('bmDownloadSvg').addEventListener('click', async functio
         form.append('boxColor', bmLastRender.boxColor);
         form.append('inkColor', bmLastRender.inkColor);
         if (bmLastRender.printColor) form.append('printColor', bmLastRender.printColor);
+        if (bmLastRender.caption && bmLastRender.caption.length) {
+            form.append('caption', bmLastRender.caption.join('\n'));
+        }
 
         // Take the placement off the canvas, not from the form: the logo may have
         // been dragged or resized since it was generated.
