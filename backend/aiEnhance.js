@@ -16,9 +16,24 @@
 const OPENAI_IMAGE_EDITS_URL = 'https://api.openai.com/v1/images/edits';
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 
-// Cheap vision model used only to read and compare wording. Roughly $0.003 a
-// call against $0.067 for a redraw, so verifying is close to free.
-const VERIFY_MODEL = 'gpt-4o-mini';
+// Two vision models, not one, and they have different jobs.
+//
+// The everyday reader is the cheap one — a read costs a fraction of a cent
+// against about a cent for a redraw. But a single reading is a single point of
+// failure: on a stylised serif wordmark it once read VASTUKOSH as VANILLA, that
+// misreading was pinned into the redraw as the text to reproduce, the image
+// model duly drew VANILLA, and the verifier — the same model, with the same
+// eye — read the original the same wrong way and passed it. Every check leaned
+// on one misreading eye.
+//
+// So the wording is read twice, by two different models, and only pinned when
+// they agree. The second opinion is the stronger model: it is also the one that
+// verifies a redraw whenever the two readers disagreed, since that is exactly
+// the case where the cheap eye has shown it cannot be trusted on this logo.
+// gpt-6-luna replaces gpt-4o-mini as the everyday reader — the GPT-4 line is
+// superseded, and luna is both cheaper and current.
+const VERIFY_MODEL = 'gpt-6-luna';
+const SECOND_OPINION_MODEL = 'gpt-6-sol';
 
 // The model matters more here than anything else in the redraw path, because the
 // failure it prevents is the model REINVENTING the artwork. gpt-image-1 returned
@@ -113,7 +128,7 @@ function hasNonLatinScript(text) {
     return /[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(text);
 }
 
-async function chatJson(messages, timeoutMs) {
+async function chatJson(messages, timeoutMs, model) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
         const err = new Error('AI is not configured on this server.');
@@ -127,8 +142,11 @@ async function chatJson(messages, timeoutMs) {
             method: 'POST',
             headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: process.env.OPENAI_VERIFY_MODEL || VERIFY_MODEL,
-                temperature: 0,
+                model: model || process.env.OPENAI_VERIFY_MODEL || VERIFY_MODEL,
+                // No temperature. The GPT-6 models accept only their default and
+                // return 400 for anything else — which silently took out every
+                // wording read and the verifier at once, and the redraw went
+                // through with no checks at all.
                 response_format: { type: 'json_object' },
                 messages,
             }),
@@ -156,7 +174,7 @@ function imagePart(buffer, mimetype) {
 // Reads the wording off the original so it can be pinned into the redraw prompt.
 // Telling the model the exact string it must reproduce is far more reliable than
 // asking it to copy what it sees.
-async function readLogoText(buffer, mimetype, timeoutMs) {
+async function readLogoText(buffer, mimetype, timeoutMs, model) {
     const { data } = await chatJson([{
         role: 'user',
         content: [
@@ -165,15 +183,77 @@ async function readLogoText(buffer, mimetype, timeoutMs) {
                 + 'letter count, case and word order. Reply as JSON: {"text":"<exact text, empty string if none>"}.' },
             imagePart(buffer, mimetype),
         ],
-    }], timeoutMs);
+    }], timeoutMs, model);
     return typeof data.text === 'string' ? data.text.trim() : '';
+}
+
+// The same compare used by the verifier: whitespace and case are what the
+// models are inconsistent about; letters are what matter.
+const normWording = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+function sameWording(a, b) {
+    return normWording(a).length > 0 && normWording(a) === normWording(b);
+}
+
+// How far apart two readings are, as a share of the longer one. Two readers
+// that differ by one letter both saw the same word and one slipped; two that
+// differ by most of the word saw different words, and one of them made it up.
+// Those are different kinds of evidence and are treated differently.
+function wordingDistance(a, b) {
+    const x = normWording(a), y = normWording(b);
+    if (!x.length && !y.length) return 0;
+    if (!x.length || !y.length) return 1;
+    let prev = Array.from({ length: y.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= x.length; i++) {
+        const cur = [i];
+        for (let j = 1; j <= y.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+        }
+        prev = cur;
+    }
+    return prev[y.length] / Math.max(x.length, y.length);
+}
+
+// Up to this share of the wording differing counts as the two readers seeing
+// the same word — a slipped letter, a doubled one. On a nine-letter word with
+// a subtitle, one letter is about 3%; VANILLA against VASTUKOSH is over 50%.
+const NEAR_AGREEMENT = 0.15;
+
+// Reads the wording with both models at once. `text` is set only when the two
+// agree — that is the string safe to pin into the redraw. When they do not,
+// nothing is pinned and both readings are handed back so the caller can say
+// what each eye saw.
+async function readLogoTextTwice(buffer, mimetype, timeoutMs) {
+    const secondModel = process.env.OPENAI_SECOND_OPINION_MODEL || SECOND_OPINION_MODEL;
+    const settled = await Promise.allSettled([
+        readLogoText(buffer, mimetype, timeoutMs),
+        readLogoText(buffer, mimetype, timeoutMs, secondModel),
+    ]);
+    const first = settled[0].status === 'fulfilled' ? settled[0].value : null;
+    const second = settled[1].status === 'fulfilled' ? settled[1].value : null;
+    settled.forEach((r, i) => {
+        if (r.status === 'rejected') console.warn(`Wording read ${i + 1} failed:`, r.reason && r.reason.message);
+    });
+    // One eye is no better than before; only two eyes that agree count.
+    const agree = first !== null && second !== null && sameWording(first, second);
+    const distance = (first !== null && second !== null) ? wordingDistance(first, second) : 1;
+    return {
+        text: agree ? first : '',
+        agree,
+        // Not agreed, but close: both saw the same word and one slipped a
+        // letter. Nothing is pinned — we do not know which one slipped — but
+        // this is not the evidence of a made-up word either.
+        near: !agree && distance <= NEAR_AGREEMENT,
+        distance,
+        reads: [first, second],
+        secondModel,
+    };
 }
 
 // Compares original against redraw in ONE call. Two independent transcriptions
 // would each carry their own reading errors and disagree on correct output;
 // asking for a direct comparison sidesteps that. Verified on a wordmark where
 // dropping a single letter was correctly flagged.
-async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
+async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs, model) {
     const { data } = await chatJson([{
         role: 'user',
         content: [
@@ -189,7 +269,7 @@ async function verifyRedraw(originalBuf, originalMime, redrawBuf, timeoutMs) {
             imagePart(originalBuf, originalMime),
             imagePart(redrawBuf, 'image/png'),
         ],
-    }], timeoutMs);
+    }], timeoutMs, model);
     // The model sometimes answers text_matches:false while quoting two identical
     // strings — a real conversion was rejected for "producing MAN instead of
     // MAN". Its own transcriptions are the evidence and its boolean is only a
@@ -282,7 +362,10 @@ async function enhanceImage(buffer, mimetype, { width, height }, timeoutMs, exac
     // "dbiaa" instead of "dibiaa".
     const prompt = exactText
         ? PROMPT + ` The text must read EXACTLY "${exactText}" — every character, same spelling, same letter count. Do not drop, add or alter a single letter.`
-        : PROMPT;
+        // No string to pin, so the instruction has to close the door the pinned
+        // one closes by naming the word: copy the lettering that is there, and
+        // never swap in a different word that merely looks similar.
+        : PROMPT + ' Copy the lettering exactly as it appears in the image, letter by letter. Never replace it with a different or similar-looking word.';
     form.append('prompt', prompt);
     form.append('quality', quality);
     form.append('size', size);
@@ -344,7 +427,9 @@ async function enhanceImage(buffer, mimetype, { width, height }, timeoutMs, exac
 module.exports = {
     enhanceImage,
     readLogoText,
+    readLogoTextTwice,
     verifyRedraw,
+    SECOND_OPINION_MODEL,
     readBoxTemplateInfo,
     parseBoxSize,
     hasNonLatinScript,

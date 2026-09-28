@@ -648,12 +648,29 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
             // Read the wording first so it can be pinned into the prompt. A model
             // told the exact string to reproduce drops letters far less often than
             // one asked to copy what it sees.
+            //
+            // Read by two different models, and pinned only when they agree. One
+            // reader once saw VANILLA in VASTUKOSH; pinned, that became the word
+            // the redraw was told to draw, and the same reader then passed it at
+            // verification. A string only one eye has seen is not safe to pin.
             let exactText = '';
+            let reading = { text: '', agree: false, near: false, distance: 1, reads: [null, null], secondModel: null };
             try {
-                exactText = await aiEnhance.readLogoText(originalBuffer, originalMime, OPENAI_TIMEOUT_MS);
+                reading = await aiEnhance.readLogoTextTwice(originalBuffer, originalMime, OPENAI_TIMEOUT_MS);
+                exactText = reading.text;
+                if (!reading.agree) {
+                    console.warn('Wording readers disagree, not pinning:', JSON.stringify(reading.reads));
+                }
             } catch (textErr) {
                 console.warn('Could not pre-read logo text:', textErr.message);
             }
+            // When the two readers disagreed outright, the cheap one has shown it
+            // cannot be trusted on this logo — so the stronger one does the
+            // verifying. A near-miss is different: both saw the same word, the
+            // wording is essentially known, and the everyday verifier is the one
+            // with the track record. The strong model returned an empty reading
+            // of a correct redraw on a near-miss, three times running.
+            const verifyModel = (reading.agree || reading.near) ? undefined : reading.secondModel;
 
             // Non-Latin scripts used to skip the redraw entirely, because
             // gpt-image-1 corrupted them and the verifier could not read them well
@@ -662,7 +679,7 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
             // so the redraw now runs for every script. The verifier still cannot read
             // them, so what changed is the claim made afterwards, not whether we
             // attempt it.
-            const scriptIsVerifiable = !aiEnhance.hasNonLatinScript(exactText);
+            const scriptIsVerifiable = !aiEnhance.hasNonLatinScript(exactText || (reading.reads || []).find(Boolean) || '');
 
             // Then check the wording actually survived. A redraw that silently
             // drops a letter is worse than no redraw at all — it is a corrupted
@@ -698,10 +715,16 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                     continue;
                 }
                 const black = await forceBlack(enhanced.buffer);
+                // What the verifier is shown is not what gets traced. The redraw
+                // is black artwork on a transparent sheet, and a vision model that
+                // composites transparency onto black is looking at black on black
+                // — it read one such redraw as empty and rejected it. On white,
+                // there is something to read.
+                const blackOnWhite = await flattenOntoWhite(await Jimp.read(black));
 
                 let check = null;
                 try {
-                    check = await aiEnhance.verifyRedraw(originalBuffer, originalMime, black, OPENAI_TIMEOUT_MS);
+                    check = await aiEnhance.verifyRedraw(originalBuffer, originalMime, blackOnWhite, OPENAI_TIMEOUT_MS, verifyModel);
                 } catch (verifyErr) {
                     console.warn('Redraw verification unavailable:', verifyErr.message);
                 }
@@ -721,7 +744,19 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 // Unverifiable is not the same as wrong: keep the redraw but flag
                 // that it could not be checked, rather than disabling the feature
                 // every time the verifier has a bad minute.
-                if (!check || check.textMatches || unverifiable) accepted = attempts[attempts.length - 1];
+                //
+                // With one exception. When the wording could not be confirmed
+                // AND the mark has changed, both signals say the same thing: this
+                // is a different logo. A mark mismatch alone stays advisory — the
+                // verifier has called a correct redraw's mark different before —
+                // but it is not alone here, and a plausible-looking wrong logo is
+                // the worst thing this tab can hand out.
+                // A near-miss between the readers — one letter apart — is not that
+                // evidence: both saw the same word. Only a far disagreement, where
+                // one reader plainly saw a different word, arms the strict gate.
+                const differentLogo = !reading.agree && !reading.near && check && check.shapesMatch === false;
+                attempts[attempts.length - 1].differentLogo = differentLogo;
+                if (!differentLogo && (!check || check.textMatches || unverifiable)) accepted = attempts[attempts.length - 1];
             }
 
             if (accepted) {
@@ -730,7 +765,12 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                 enhanceMeta = {
                     ...accepted.meta,
                     attempts: attempts.length,
-                    expectedText: exactText || null,
+                    expectedText: exactText || (accepted.check && accepted.check.text1) || null,
+                    readsAgree: reading.agree,
+                    readsNear: reading.near,
+                    readsDistance: Math.round(reading.distance * 1000) / 1000,
+                    reads: reading.reads,
+                    verifyModel: verifyModel || null,
                     verified: accepted.unverifiable ? null : (accepted.check ? accepted.check.textMatches : null),
                     confident: accepted.check ? accepted.check.confident : null,
                     unverifiable: Boolean(accepted.unverifiable),
@@ -766,11 +806,37 @@ app.post('/api/convert/svg', requireAdmin, upload.single('image'), async (req, r
                     ? 'the AI image service refused this image on every attempt, so your original was traced instead'
                     : 'the AI clean-up failed (' + msg.slice(0, 120) + '), so your original was traced instead';
                 console.warn('AI redraw produced nothing after 3 attempts —', msg);
+            } else if (attempts.every((a) => a.differentLogo)) {
+                const oneLine = (t) => String(t || '?').replace(/\s+/g, ' ').trim();
+                enhanceError = 'the AI drew a different logo (the mark changed and the wording could not be '
+                    + 'confirmed — one reader saw "' + oneLine(reading.reads[0]) + '", the other "'
+                    + oneLine(reading.reads[1]) + '"), so your original was traced instead';
+                console.warn('AI redraw rejected as a different logo after', attempts.length, 'attempts');
             } else {
                 const last = attempts[attempts.length - 1].check;
                 enhanceError = 'the AI changed the wording (it produced "' + last.text2
                     + '" instead of "' + last.text1 + '"), so your original was traced instead to keep the logo exact';
                 console.warn('AI redraw rejected after', attempts.length, 'attempts —', enhanceError);
+            }
+            // Whatever happened, say what the checks saw. A rejection that reports
+            // nothing about why cannot be told apart from a misjudgement.
+            if (!accepted && attempts.length) {
+                const last = attempts[attempts.length - 1];
+                enhanceMeta = {
+                    ...(enhanceMeta || {}),
+                    attempts: attempts.length,
+                    rejected: true,
+                    readsAgree: reading.agree,
+                    readsNear: reading.near,
+                    readsDistance: Math.round(reading.distance * 1000) / 1000,
+                    reads: reading.reads,
+                    verifyModel: verifyModel || null,
+                    lastCheck: last.check ? {
+                        text1: last.check.text1, text2: last.check.text2,
+                        textMatches: last.check.textMatches, shapesMatch: last.check.shapesMatch,
+                        confident: last.check.confident,
+                    } : null,
+                };
             }
         } catch (aiErr) {
             if (aiErr && aiErr.code === 'ESKIP') {
