@@ -1305,6 +1305,31 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
 const BM_CAPTION_SCALE = 0.022;     // of the drawing's width
 const BM_CAPTION_INK = '#1a1a1a';
 
+// The logo's printed size, read off the canvas at the moment of download. The
+// other caption lines are recorded when the mockup is generated, because the
+// dropdowns can be changed afterwards without changing the drawing. The logo is
+// the opposite case: it can be dragged and resized after generating, and that
+// DOES change the drawing — so the number the file carries has to be the size
+// of the logo that is actually in it.
+function bmLogoSizeLine() {
+    if (!bmLogoObject || !bmLastRender || !(bmLastRender.ppi > 0) || !(bmLastRender.scale > 0)) return '';
+    const s = bmLastRender.scale;
+    const wIn = (bmLogoObject.width * bmLogoObject.scaleX / s) / bmLastRender.ppi;
+    const hIn = (bmLogoObject.height * bmLogoObject.scaleY / s) / bmLastRender.ppi;
+    if (!(wIn > 0) || !(hIn > 0)) return '';
+    const round2 = (v) => Math.round(v * 100) / 100;
+    return 'Logo size - ' + round2(wIn) + ' x ' + round2(hIn) + ' in';
+}
+
+// Everything printed under the die-line: what was generated, plus the logo as it
+// is right now.
+function bmCaptionLines() {
+    const lines = (bmLastRender && bmLastRender.caption) ? bmLastRender.caption.slice() : [];
+    const logo = bmLogoSizeLine();
+    if (logo) lines.push(logo);
+    return lines;
+}
+
 function bmCaptionMetrics(width, lines) {
     const size = Math.max(11, Math.round(width * BM_CAPTION_SCALE));
     const lead = Math.round(size * 1.38);
@@ -1319,7 +1344,7 @@ document.getElementById('bmDownload').addEventListener('click', async function (
     // Export at the template's real resolution, not the on-screen size.
     const url = bmCanvas.toDataURL({ format: 'png', multiplier: bmExportMultiplier });
     const tpl = bmSelectedTemplate();
-    const lines = (bmLastRender && bmLastRender.caption) || [];
+    const lines = bmCaptionLines();
 
     let out = url;
     if (lines.length) {
@@ -1385,9 +1410,8 @@ document.getElementById('bmDownloadSvg').addEventListener('click', async functio
         form.append('boxColor', bmLastRender.boxColor);
         form.append('inkColor', bmLastRender.inkColor);
         if (bmLastRender.printColor) form.append('printColor', bmLastRender.printColor);
-        if (bmLastRender.caption && bmLastRender.caption.length) {
-            form.append('caption', bmLastRender.caption.join('\n'));
-        }
+        const captionLines = bmCaptionLines();
+        if (captionLines.length) form.append('caption', captionLines.join('\n'));
 
         // Take the placement off the canvas, not from the form: the logo may have
         // been dragged or resized since it was generated.
