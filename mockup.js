@@ -504,6 +504,10 @@ function bmRecolour(sourceCanvas, hex, region, texture) {
         panelMask: layerCanvas((p) => panel[p]),
         inkMask: layerCanvas((p) => lum[p] <= BM_WHITE),
         ink: '#' + ink.map((n) => n.toString(16).padStart(2, '0')).join(''),
+        // The template's own grey levels, kept for the print-resolution PNG. The
+        // masks above are binary, and enlarging a binary edge gives a wobble; the
+        // grey levels carry where the edge really was, to a fraction of a pixel.
+        lum,
     };
 }
 
@@ -1209,6 +1213,13 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
                 : null,
             scale: scale,
             ppi: ppi || 0,
+            // Whether the PNG can be rebuilt sharper than the die's own pixels.
+            // Only a white template that was tinted here can: its panels and lines
+            // are the two masks above, so they can be redrawn at any size. A
+            // template that shipped already printed, or a vector one, is at print
+            // resolution to begin with and keeps the ordinary export.
+            sharpBase: !hasArtwork && !tpl.vector && Boolean(layers.lum),
+            lum: layers.lum || null,
             // Recorded as the mockup was made, not read back off the form when
             // the download is clicked — the dropdowns can be changed afterwards,
             // and a caption that disagreed with the drawing above it would be
@@ -1297,6 +1308,193 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
     }
 });
 
+// ── Print-resolution PNG ──
+//
+// The ordinary export is the die at its own resolution. That is fine for a die
+// drawn at print resolution and hopeless for one that is not: the legacy Ring Box
+// template is 524px wide (105 px/in), so its PNG came out 524px wide, the
+// one-inch logo was squeezed into about 105 of them, and zooming showed it.
+//
+// Scaling that picture up cannot help — the detail was never in it. What CAN be
+// redrawn sharply are the two things the picture is made of. The panels and the
+// cut lines already exist as masks at the die's resolution (the vector download
+// traces them), so here each is enlarged and its edge re-sharpened to about one
+// pixel, rather than left as the wide soft ramp that plain enlargement gives.
+// And the logo is drawn from its own full-resolution source rather than from the
+// ~105px it occupies on the die.
+const BM_PRINT_PPI = 300;
+const BM_EXPORT_MAX_SIDE = 9000;
+const BM_EXPORT_MAX_PIXELS = 24e6;   // keeps the per-pixel work and memory bounded
+
+// How much to enlarge the die by, or 1 when there is nothing to gain: already at
+// print resolution, no inch scale to judge by, or not a die that can be redrawn.
+function bmSharpFactor() {
+    const r = bmLastRender;
+    if (!r || !r.sharpBase || !(r.ppi > 0) || !(r.scale > 0)) return 1;
+    if (!/^#[0-9a-f]{6}$/i.test(r.boxColor || '') || !/^#[0-9a-f]{6}$/i.test(r.inkColor || '')) return 1;
+    let k = BM_PRINT_PPI / r.ppi;
+    if (k <= 1.05) return 1;
+    k = Math.min(k,
+        BM_EXPORT_MAX_SIDE / Math.max(r.width, r.height),
+        Math.sqrt(BM_EXPORT_MAX_PIXELS / (r.width * r.height)));
+    return k > 1.05 ? k : 1;
+}
+
+// A black-on-white mask, enlarged, as a 0..1 coverage per output pixel. Bilinear
+// enlargement turns a hard edge into a ramp k pixels wide; pushing the contrast
+// up by k squeezes that ramp back to about one pixel, which is what an
+// anti-aliased edge looks like. A one-pixel line comes out k pixels wide — its
+// true scaled width — instead of a blur.
+function bmMaskCoverage(mask, W, H, k) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(mask, 0, 0, W, H);
+    const px = ctx.getImageData(0, 0, W, H).data;
+    const out = new Float32Array(W * H);
+    const gain = Math.max(1.5, k);
+    for (let p = 0; p < out.length; p++) {
+        const a = (1 - px[p * 4] / 255 - 0.5) * gain + 0.5;
+        out[p] = a < 0 ? 0 : (a > 1 ? 1 : a);
+    }
+    return out;
+}
+
+// The cut lines and lettering, enlarged from the template's own grey levels.
+//
+// Enlarged smoothly, a grey-level edge stays a faithful edge: its anti-aliasing
+// says where the boundary really was to a fraction of a pixel, and pushing the
+// contrast back up afterwards re-sharpens it without inventing a wobble. The
+// pivot sits a little below the middle so a one-pixel hairline, whose grey never
+// reaches full black, is kept rather than fading out — at the cost of edges
+// standing a fraction of a pixel proud, which is far less than the binary mask's
+// thresholding cost.
+const BM_INK_PIVOT = 0.4;
+
+function bmToneCoverage(lum, w0, h0, W, H, k) {
+    const src = document.createElement('canvas');
+    src.width = w0; src.height = h0;
+    const sctx = src.getContext('2d');
+    const img = sctx.createImageData(w0, h0);
+    for (let p = 0; p < lum.length; p++) {
+        const v = lum[p];
+        const i = p * 4;
+        img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255;
+    }
+    sctx.putImageData(img, 0, 0);
+
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, W, H);
+    const px = ctx.getImageData(0, 0, W, H).data;
+    const out = new Float32Array(W * H);
+    const gain = Math.max(1.5, k);
+    for (let p = 0; p < out.length; p++) {
+        const a = (1 - px[p * 4] / 255 - BM_INK_PIVOT) * gain + 0.5;
+        out[p] = a < 0 ? 0 : (a > 1 ? 1 : a);
+    }
+    return out;
+}
+
+// Draws an image at a size far below its own without the aliasing a single big
+// downscale gives: halve until within a factor of two of the target, then finish.
+function bmDrawSharp(ctx, img, dx, dy, dw, dh) {
+    let src = img;
+    let sw = img.naturalWidth || img.width;
+    let sh = img.naturalHeight || img.height;
+    while (sw / 2 >= dw && sh / 2 >= dh) {
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(sw / 2));
+        c.height = Math.max(1, Math.round(sh / 2));
+        const x = c.getContext('2d');
+        x.imageSmoothingEnabled = true;
+        x.imageSmoothingQuality = 'high';
+        x.drawImage(src, 0, 0, c.width, c.height);
+        src = c; sw = c.width; sh = c.height;
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, dx, dy, dw, dh);
+}
+
+// The die and logo at print resolution as a PNG data URL, or null when the
+// ordinary export is already as good as it can be.
+async function bmSharpExport() {
+    const r = bmLastRender;
+    const k = bmSharpFactor();
+    if (k <= 1) return null;
+
+    const W = Math.round(r.width * k);
+    const H = Math.round(r.height * k);
+    const panelA = bmMaskCoverage(r.panelMask, W, H, k);
+    const inkA = bmToneCoverage(r.lum, r.width, r.height, W, H, k);
+    const box = bmHex(r.boxColor);
+    const inkIn = bmHex(r.inkColor);
+
+    // A metallic card across the whole sheet, as the ordinary path does.
+    let tex = null;
+    if (bmBoxTexture) {
+        const tc = document.createElement('canvas');
+        tc.width = W; tc.height = H;
+        const tctx = tc.getContext('2d', { willReadFrequently: true });
+        const cover = Math.max(W / bmBoxTexture.naturalWidth, H / bmBoxTexture.naturalHeight);
+        const tw = bmBoxTexture.naturalWidth * cover, th = bmBoxTexture.naturalHeight * cover;
+        tctx.imageSmoothingQuality = 'high';
+        tctx.drawImage(bmBoxTexture, (W - tw) / 2, (H - th) / 2, tw, th);
+        tex = tctx.getImageData(0, 0, W, H).data;
+    }
+
+    // Panels in the card colour, cut lines over them. A line inside a panel takes
+    // the ink chosen for that card (light on a dark box); the caption and any line
+    // out on the bare sheet is always the dark ink, as on the ordinary export.
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const image = ctx.createImageData(W, H);
+    const o = image.data;
+    for (let p = 0; p < W * H; p++) {
+        const pa = panelA[p];
+        const ia = inkA[p];
+        if (pa <= 0 && ia <= 0) continue;
+        const i = p * 4;
+        const pr = tex ? tex[i] : box[0];
+        const pg = tex ? tex[i + 1] : box[1];
+        const pb = tex ? tex[i + 2] : box[2];
+        const ir = 26 + (inkIn[0] - 26) * pa;
+        const ig = 26 + (inkIn[1] - 26) * pa;
+        const ib = 26 + (inkIn[2] - 26) * pa;
+        const a = ia + pa * (1 - ia);
+        if (a <= 0) continue;
+        o[i]     = (ir * ia + pr * pa * (1 - ia)) / a;
+        o[i + 1] = (ig * ia + pg * pa * (1 - ia)) / a;
+        o[i + 2] = (ib * ia + pb * pa * (1 - ia)) / a;
+        o[i + 3] = Math.round(a * 255);
+    }
+    ctx.putImageData(image, 0, 0);
+
+    // The logo, wherever it has been dragged and however it has been resized or
+    // turned, drawn from its own pixels. The canvas coordinates are the on-screen
+    // ones, so they convert through the die's pixels to this size.
+    const logo = bmLogoObject;
+    const el = logo && logo.getElement ? logo.getElement() : null;
+    if (el) {
+        const f = k / r.scale;
+        const w = logo.width * logo.scaleX * f;
+        const h = logo.height * logo.scaleY * f;
+        ctx.save();
+        ctx.translate(logo.left * f, logo.top * f);
+        ctx.rotate(((logo.angle || 0) * Math.PI) / 180);
+        bmDrawSharp(ctx, el, -w / 2, -h / 2, w, h);
+        ctx.restore();
+    }
+    return canvas.toDataURL('image/png');
+}
+
 // The caption printed under every download. Sized against the drawing's own
 // width so it reads the same on a 1,500px ring box and a 5,600px haram box, and
 // set in the same dark the cut lines are drawn in — the band around the die is
@@ -1340,8 +1538,16 @@ document.getElementById('bmDownload').addEventListener('click', async function (
     if (!bmCanvas) return;
     bmCanvas.discardActiveObject();
     bmCanvas.renderAll();
-    // Export at the template's real resolution, not the on-screen size.
-    const url = bmCanvas.toDataURL({ format: 'png', multiplier: bmExportMultiplier });
+    // Export at the template's real resolution, not the on-screen size — or, for a
+    // die drawn below print resolution, rebuilt at 300 px/in (see bmSharpExport).
+    // A failure there must not cost the download: fall back to the ordinary one.
+    let url = null;
+    try {
+        url = await bmSharpExport();
+    } catch (sharpErr) {
+        console.warn('Print-resolution export unavailable, using the die resolution:', sharpErr.message);
+    }
+    if (!url) url = bmCanvas.toDataURL({ format: 'png', multiplier: bmExportMultiplier });
     const tpl = bmSelectedTemplate();
     const lines = bmCaptionLines();
 
