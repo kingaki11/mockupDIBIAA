@@ -183,8 +183,7 @@ function bmPopulateColours() {
     bmRenderColourOptions(BOX_COLOURS, null);
     document.getElementById('bmColor').addEventListener('change', bmSyncColourChip);
 
-    // Printing colours come from the same map the Create Mockup tab recolours
-    // with, so the two tabs cannot drift apart.
+    // Printing colours come from the shared palette in boxscript.js.
     const print = document.getElementById('bmPrintColor');
     const none = document.createElement('option');
     none.value = 'None';
@@ -888,7 +887,7 @@ function bmApplyProportionLock() {
     if (bmCanvas) bmCanvas.requestRenderAll();
 }
 
-// Applies the printing colour, exactly as the Create Mockup tab does: pixels
+// Applies the printing colour: pixels
 // below the alpha floor are cleared rather than painted, so a soft matte edge
 // does not become a coloured haze.
 function bmApplyPrintingColour(dataUrl, printing) {
