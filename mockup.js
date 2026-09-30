@@ -1219,6 +1219,10 @@ document.getElementById('bmGenerate').addEventListener('click', async function (
             // template that shipped already printed, or a vector one, is at print
             // resolution to begin with and keeps the ordinary export.
             sharpBase: !hasArtwork && !tpl.vector && Boolean(layers.lum),
+            // A die supplied already printed draws its cut lines in its own colour
+            // everywhere; a white template tinted here draws lettering on the bare
+            // sheet dark. The 4K PNG needs to know which.
+            artwork: Boolean(hasArtwork),
             lum: layers.lum || null,
             // Recorded as the mockup was made, not read back off the form when
             // the download is clicked — the dropdowns can be changed afterwards,
@@ -1495,6 +1499,230 @@ async function bmSharpExport() {
     return canvas.toDataURL('image/png');
 }
 
+// ── 4K PNG, drawn from the vector artwork ──
+//
+// A PNG built from the die's pixels can only be as sharp as those pixels, and any
+// enlargement of them shows at zoom. So the PNG is now drawn the way the SVG
+// download is made — the die's panels and cut lines traced into curves on the
+// server, the logo from its own vector trace — and those curves are rendered at
+// 4K-class resolution. Every edge is then computed at the output size rather than
+// enlarged into it: crisp at the resolution of the file itself.
+//
+// The look is kept exactly as the ordinary PNG: panels in the card colour (or the
+// metallic card), cut lines light on a dark box, the template's own lettering dark
+// on the bare sheet, the logo in the printing colour at its placed size and angle.
+const BM_PNG_TARGET_PPI = 600;       // twice print resolution
+const BM_PNG_MIN_LONG_SIDE = 4096;   // "4K" even on the smallest box
+const BM_PNG_MAX_SIDE = 8192;
+const BM_PNG_MAX_PIXELS = 24e6;      // bounds the browser's memory: several layers of this
+
+// How much larger than the die's own pixels the PNG is drawn. Never below 1.
+function bmVectorPngFactor(r) {
+    const longSide = Math.max(r.width, r.height);
+    let k = Math.max(1, BM_PNG_MIN_LONG_SIDE / longSide, r.ppi > 0 ? BM_PNG_TARGET_PPI / r.ppi : 1);
+    // The caption band adds roughly a fifth to the height; leave room for it.
+    k = Math.min(k,
+        BM_PNG_MAX_SIDE / (longSide * 1.25),
+        Math.sqrt(BM_PNG_MAX_PIXELS / (r.width * r.height * 1.25)));
+    return Math.max(1, k);
+}
+
+// A 0..1 coverage map as the black-on-white mask the tracer takes.
+function bmCoverageMask(cov, W, H) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const im = x.createImageData(W, H);
+    for (let p = 0; p < W * H; p++) {
+        const v = cov[p] >= 0.5 ? 0 : 255;
+        const i = p * 4;
+        im.data[i] = v; im.data[i + 1] = v; im.data[i + 2] = v; im.data[i + 3] = 255;
+    }
+    x.putImageData(im, 0, 0);
+    return c;
+}
+
+function bmLoadSvgImage(text) {
+    return new Promise(function (resolve, reject) {
+        const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+        const img = new Image();
+        img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Could not draw the vector artwork.')); };
+        img.src = url;
+    });
+}
+
+// One named layer of the traced die, rendered at W x H.
+async function bmSvgLayer(svgText, keepId, W, H, into) {
+    const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+    const root = doc.documentElement;
+    [...root.children].forEach(function (el) {
+        if (el.tagName.toLowerCase() === 'g' && el.getAttribute('id') !== keepId) el.remove();
+    });
+    root.setAttribute('width', String(W));
+    root.setAttribute('height', String(H));
+    const img = await bmLoadSvgImage(new XMLSerializer().serializeToString(doc));
+    const c = into || document.createElement('canvas');
+    c.width = W; c.height = H;   // also clears a reused canvas
+    c.getContext('2d').drawImage(img, 0, 0, W, H);
+    return c;
+}
+
+// The logo's own vector trace, cropped to its ink and painted in the printing
+// colour, ready to draw at w x h — or null, in which case the raster is used.
+//
+// Only a one-colour trace qualifies. A colour trace is stacked shapes, light
+// details sitting on top of the fill; painting every shape in one ink would fill
+// the details in. And the trace covers the whole sheet it was made from, margins
+// and all, while the placed logo is trimmed to its ink — so it is cropped to match.
+async function bmLogoVectorImage(w, h) {
+    if (!bmLogoVector) return null;
+    const fills = new Set((bmLogoVector.match(/fill="(?!none")[^"]*"/gi) || []).map(function (f) { return f.toLowerCase(); }));
+    if (fills.size !== 1) return null;
+    let text = bmLogoVector;
+    const ink = bmLastRender && bmLastRender.printColor;
+    if (ink) text = text.replace(/fill="(?!none")[^"]*"/gi, 'fill="' + ink + '"');
+
+    const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+    const root = doc.documentElement;
+    const vb = (root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    if (vb.length !== 4 || !(vb[2] > 0) || !(vb[3] > 0)) return null;
+
+    // Find the ink by rendering once, small.
+    const probeLong = 1000;
+    const ps = probeLong / Math.max(vb[2], vb[3]);
+    const pw = Math.max(1, Math.round(vb[2] * ps)), ph = Math.max(1, Math.round(vb[3] * ps));
+    root.setAttribute('width', String(pw)); root.setAttribute('height', String(ph));
+    const probe = await bmLoadSvgImage(new XMLSerializer().serializeToString(doc));
+    const pc = document.createElement('canvas');
+    pc.width = pw; pc.height = ph;
+    const px = pc.getContext('2d', { willReadFrequently: true });
+    px.drawImage(probe, 0, 0, pw, ph);
+    const d = px.getImageData(0, 0, pw, ph).data;
+    let x0 = pw, y0 = ph, x1 = -1, y1 = -1;
+    for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
+        if (d[(y * pw + x) * 4 + 3] > 12) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (x1 < x0) return null;
+    const cx = vb[0] + x0 / ps, cy = vb[1] + y0 / ps;
+    const cw = (x1 - x0 + 1) / ps, ch = (y1 - y0 + 1) / ps;
+    root.setAttribute('viewBox', cx + ' ' + cy + ' ' + cw + ' ' + ch);
+    root.setAttribute('preserveAspectRatio', 'none');
+    root.setAttribute('width', String(Math.max(1, Math.round(w))));
+    root.setAttribute('height', String(Math.max(1, Math.round(h))));
+    return bmLoadSvgImage(new XMLSerializer().serializeToString(doc));
+}
+
+// The whole PNG, from vectors, as a data URL with its caption already on it.
+async function bmVectorPng() {
+    const r = bmLastRender;
+    if (!r || !r.panelMask || !r.inkMask) return null;
+    const k = bmVectorPngFactor(r);
+
+    // A die below print resolution is traced from an enlarged copy of its masks,
+    // so the curves follow its edges to a fraction of a pixel. The cut lines come
+    // from the template's grey levels rather than its binary mask, which would
+    // trace every stair-step of a low-resolution edge.
+    const m = (r.lum && r.ppi > 0 && r.ppi < 300)
+        ? Math.max(1, Math.min(3, Math.ceil(300 / r.ppi), Math.floor(4000 / Math.max(r.width, r.height))))
+        : 1;
+    const mw = r.width * m, mh = r.height * m;
+    const panelMask = m > 1 ? bmCoverageMask(bmMaskCoverage(r.panelMask, mw, mh, m), mw, mh) : r.panelMask;
+    const inkMask = r.lum ? bmCoverageMask(bmToneCoverage(r.lum, r.width, r.height, mw, mh, m), mw, mh) : r.inkMask;
+
+    const form = new FormData();
+    form.append('panelMask', await bmCanvasToBlob(panelMask), 'panel.png');
+    form.append('inkMask', await bmCanvasToBlob(inkMask), 'ink.png');
+    form.append('width', String(mw));
+    form.append('height', String(mh));
+    form.append('boxColor', r.boxColor);
+    form.append('inkColor', r.inkColor);
+    const captionLines = bmCaptionLines();
+    if (captionLines.length) form.append('caption', captionLines.join('\n'));
+    const res = await fetch(BACKEND_URL + '/api/mockup/svg', { method: 'POST', headers: adminAuthHeaders(), body: form });
+    const data = await res.json().catch(function () { return {}; });
+    if (!res.ok || !data.svg) throw new Error(data.error || 'vector trace failed (' + res.status + ')');
+
+    const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(data.svg);
+    if (!vb) throw new Error('the traced file had no size');
+    const sc = k / m;
+    const W = Math.round(parseFloat(vb[1]) * sc);
+    const H = Math.round(parseFloat(vb[2]) * sc);
+
+    const out = document.createElement('canvas');
+    out.width = W; out.height = H;
+    const ctx = out.getContext('2d');
+
+    // Panels, in the card colour or the metallic card itself.
+    const panels = await bmSvgLayer(data.svg, 'box-panels', W, H);
+    const tmp = document.createElement('canvas');
+    if (bmBoxTexture) {
+        tmp.width = W; tmp.height = H;
+        const t = tmp.getContext('2d');
+        const cover = Math.max(W / bmBoxTexture.naturalWidth, H / bmBoxTexture.naturalHeight);
+        const tw = bmBoxTexture.naturalWidth * cover, th = bmBoxTexture.naturalHeight * cover;
+        t.imageSmoothingQuality = 'high';
+        t.drawImage(bmBoxTexture, (W - tw) / 2, (H - th) / 2, tw, th);
+        t.globalCompositeOperation = 'destination-in';
+        t.drawImage(panels, 0, 0);
+        ctx.drawImage(tmp, 0, 0);
+    } else {
+        ctx.drawImage(panels, 0, 0);
+    }
+
+    // Cut lines. On a die supplied already printed, every line is in the artwork's
+    // own line colour, exactly as the traced layer has it: its panel mask leaves
+    // the lines out, so splitting by it would call every line "off the panel" and
+    // paint them all dark. On a white template tinted here, lines crossing a panel
+    // take the card's ink and the template's lettering on the bare sheet is dark.
+    const lines = await bmSvgLayer(data.svg, 'cut-lines', W, H);
+    if (r.artwork) {
+        ctx.drawImage(lines, 0, 0);
+    } else {
+    tmp.width = W; tmp.height = H;
+    let t = tmp.getContext('2d');
+    t.drawImage(lines, 0, 0);
+    t.globalCompositeOperation = 'destination-in';
+    t.drawImage(panels, 0, 0);
+    ctx.drawImage(tmp, 0, 0);
+    tmp.width = W;   // clears it
+    t = tmp.getContext('2d');
+    t.drawImage(lines, 0, 0);
+    t.globalCompositeOperation = 'source-in';
+    t.fillStyle = BM_CAPTION_INK;
+    t.fillRect(0, 0, W, H);
+    t.globalCompositeOperation = 'destination-out';
+    t.drawImage(panels, 0, 0);
+    ctx.drawImage(tmp, 0, 0);
+    }
+    lines.width = 1; tmp.width = 1;
+
+    // The logo, where it sits now and at its angle, from its vector where it has
+    // a clean one and from its full-resolution pixels where it does not.
+    const logo = bmLogoObject;
+    if (logo) {
+        const f = k / r.scale;
+        const w = logo.width * logo.scaleX * f;
+        const h = logo.height * logo.scaleY * f;
+        let vec = null;
+        try { vec = await bmLogoVectorImage(w, h); } catch (vErr) { vec = null; }
+        ctx.save();
+        ctx.translate(logo.left * f, logo.top * f);
+        ctx.rotate(((logo.angle || 0) * Math.PI) / 180);
+        if (vec) ctx.drawImage(vec, -w / 2, -h / 2, w, h);
+        else if (logo.getElement) bmDrawSharp(ctx, logo.getElement(), -w / 2, -h / 2, w, h);
+        ctx.restore();
+    }
+
+    // The caption, already set out by the server under the die.
+    if (captionLines.length) {
+        const cap = await bmSvgLayer(data.svg, 'caption', W, H, panels);
+        ctx.drawImage(cap, 0, 0);
+    }
+    panels.width = 1;
+    return out.toDataURL('image/png');
+}
+
 // The caption printed under every download. Sized against the drawing's own
 // width so it reads the same on a 1,500px ring box and a 5,600px haram box, and
 // set in the same dark the cut lines are drawn in — the band around the die is
@@ -1538,18 +1766,33 @@ document.getElementById('bmDownload').addEventListener('click', async function (
     if (!bmCanvas) return;
     bmCanvas.discardActiveObject();
     bmCanvas.renderAll();
-    // Export at the template's real resolution, not the on-screen size — or, for a
-    // die drawn below print resolution, rebuilt at 300 px/in (see bmSharpExport).
-    // A failure there must not cost the download: fall back to the ordinary one.
-    let url = null;
+    const button = this;
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Rendering 4K…';
     try {
-        url = await bmSharpExport();
-    } catch (sharpErr) {
-        console.warn('Print-resolution export unavailable, using the die resolution:', sharpErr.message);
+    // Drawn from the vector artwork at 4K-class resolution (see bmVectorPng).
+    // If the server trace is unreachable, fall back to the pixel exports: the
+    // print-resolution rebuild for a low-resolution die, then the die as it is.
+    // Neither failure may cost the download.
+    let url = null;
+    let captioned = false;
+    try {
+        url = await bmVectorPng();
+        captioned = Boolean(url);
+    } catch (vecErr) {
+        console.warn('4K vector render unavailable, using the pixel export:', vecErr.message);
+    }
+    if (!url) {
+        try {
+            url = await bmSharpExport();
+        } catch (sharpErr) {
+            console.warn('Print-resolution export unavailable, using the die resolution:', sharpErr.message);
+        }
     }
     if (!url) url = bmCanvas.toDataURL({ format: 'png', multiplier: bmExportMultiplier });
     const tpl = bmSelectedTemplate();
-    const lines = bmCaptionLines();
+    const lines = captioned ? [] : bmCaptionLines();
 
     let out = url;
     if (lines.length) {
@@ -1579,6 +1822,10 @@ document.getElementById('bmDownload').addEventListener('click', async function (
     a.href = out;
     a.download = (tpl ? tpl.id : 'mockup') + '-mockup.png';
     a.click();
+    } finally {
+        button.disabled = false;
+        button.textContent = label;
+    }
 });
 
 // Vector export. Each layer is traced separately on the server and returned as
