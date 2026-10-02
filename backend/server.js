@@ -54,9 +54,41 @@ app.use(cors({
 // difference between a photo conversion sending ~9.5MB and ~1MB over the wire.
 app.use(compression());
 
-app.get('/', (req, res) => {
-    res.json({ status: 'ok', service: 'mockupdibiaa-backend' });
-});
+// ── The website itself, when this server is deployed from the whole repository ──
+//
+// On Railway only the backend/ folder is deployed, so the site's files are not
+// here and '/' answers as it always has. On a host that deploys the whole repo
+// (Hostinger), the same process also serves the site, so one Node app is the
+// complete product. Only the site's own files are exposed — never backend/ source,
+// node_modules or the data folder.
+const SITE_DIR = path.join(__dirname, '..');
+const SITE_INDEX = path.join(SITE_DIR, 'index.html');
+const SERVES_SITE = fs.existsSync(SITE_INDEX);
+const SITE_FILES = new Set(['/index.html', '/boxscript.js', '/admin.js', '/mockup.js', '/boxstyles.css']);
+
+if (SERVES_SITE) {
+    // Tell the page where its API is. Empty means "this same server"; set
+    // PUBLIC_API_BASE to point a Hostinger-served site at another API instead
+    // (for example Railway, while the data still lives there).
+    const apiBase = String(process.env.PUBLIC_API_BASE || '').replace(/\/+$/, '');
+    const flag = `<script>window.__API_BASE__=${JSON.stringify(apiBase)};</script>\n    `;
+    const sendIndex = (req, res) => {
+        const html = fs.readFileSync(SITE_INDEX, 'utf8')
+            .replace('<script src="boxscript.js"></script>', flag + '<script src="boxscript.js"></script>');
+        res.type('html').send(html);
+    };
+    app.get('/', sendIndex);
+    app.get('/index.html', sendIndex);
+    app.get(/^\/(boxscript|admin|mockup)\.js$|^\/boxstyles\.css$/, (req, res) => {
+        if (!SITE_FILES.has(req.path)) return res.sendStatus(404);
+        res.sendFile(path.join(SITE_DIR, req.path));
+    });
+    app.use('/metallic', express.static(path.join(SITE_DIR, 'metallic'), { dotfiles: 'ignore', index: false }));
+} else {
+    app.get('/', (req, res) => {
+        res.json({ status: 'ok', service: 'mockupdibiaa-backend' });
+    });
+}
 
 app.get('/health', (req, res) => {
     res.json({ status: 'ok' });

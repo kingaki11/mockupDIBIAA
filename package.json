@@ -1,0 +1,13 @@
+{
+  "name": "mockup-dibiaa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jewellery box mockup tool: Convert Logo and Mockup tabs. One Node process serves the site and its API.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "postinstall": "npm install --prefix backend --omit=dev --no-audit --no-fund",
+    "start": "node backend/server.js"
+  }
+}

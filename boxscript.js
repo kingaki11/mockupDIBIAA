@@ -3,7 +3,13 @@
 
 // Backend API (Railway): die-line templates, logo cut-out, the AI redraw and the
 // vector exports all live behind it.
-const BACKEND_URL = 'https://mockupdibiaa-backend-production.up.railway.app';
+// When the page is served by the backend itself (a whole-repo deploy, e.g.
+// Hostinger), the server sets window.__API_BASE__: empty means "this same
+// server". Everywhere else — Vercel, a local static server — it is unset and the
+// page uses Railway, as before.
+const BACKEND_URL = (typeof window.__API_BASE__ === 'string')
+    ? (window.__API_BASE__ || window.location.origin)
+    : 'https://mockupdibiaa-backend-production.up.railway.app';
 
 // Printing-colour palette (RGB), keyed by lowercase name. The Mockup tab builds
 // its printing-colour dropdown from this and paints the logo with it.
