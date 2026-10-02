@@ -111,30 +111,42 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+// Storage is asynchronous (it may be a database), and Express 4 does not catch a
+// rejected promise from a handler — the request would just hang. This turns any
+// failure into a 500 instead.
+const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch((err) => {
+    if (err && err.code === 'EBADKEY') return res.status(400).json({ error: 'Invalid path.' });
+    console.error('Storage error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Server error.', detail: err && err.message });
+});
+
+// Sends a stored image, typed from its key's extension.
+async function sendStored(res, key, notFound) {
+    const data = await catalogStore.getFile(key);
+    if (!data) return res.status(404).json({ error: notFound });
+    res.type(catalogStore.mimeFor(key)).send(data);
+}
+
 app.get('/admin/verify', requireAdmin, (req, res) => {
     res.json({ ok: true });
 });
 
 // Public: frontend fetches this at load to merge admin-added entries into its dropdowns.
-app.get('/catalog', (req, res) => {
-    res.json(catalogStore.readCatalog());
-});
+app.get('/catalog', ah(async (req, res) => {
+    res.json(await catalogStore.readCatalog());
+}));
 
 // Public: serves the mockup/die images the dashboard uploaded.
-app.get('/images/:type/:style/:color/:kind', (req, res) => {
+app.get('/images/:type/:style/:color/:kind', ah(async (req, res) => {
     const { type, style, color, kind } = req.params;
     if (kind !== 'mockup' && kind !== 'die') {
         return res.status(400).json({ error: 'kind must be "mockup" or "die".' });
     }
-    const filePath = catalogStore.comboImagePath(type, style, color, kind);
-    if (!filePath.startsWith(catalogStore.IMAGES_DIR) || !fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Image not found.' });
-    }
-    res.sendFile(filePath);
-});
+    await sendStored(res, catalogStore.comboKey(type, style, color, kind), 'Image not found.');
+}));
 
 // Add (or update) a printing color available in the customer form's dropdown.
-app.post('/admin/printing-color', requireAdmin, express.json(), (req, res) => {
+app.post('/admin/printing-color', requireAdmin, express.json(), ah(async (req, res) => {
     const { label, hex } = req.body || {};
     if (!label || !hex) {
         return res.status(400).json({ error: 'label and hex are required.' });
@@ -143,11 +155,11 @@ app.post('/admin/printing-color', requireAdmin, express.json(), (req, res) => {
         return res.status(400).json({ error: 'hex must look like #RRGGBB.' });
     }
     const key = slugify(label);
-    const catalog = catalogStore.readCatalog();
+    const catalog = await catalogStore.readCatalog();
     catalog.printingColors[key] = { label: String(label).trim(), hex };
-    catalogStore.writeCatalog(catalog);
+    await catalogStore.writeCatalog(catalog);
     res.json(catalog);
-});
+}));
 
 // Save where the logo should sit for a given box combo — separately for the
 // "mockup" (often a lifestyle photo where the product isn't centered in the
@@ -155,7 +167,7 @@ app.post('/admin/printing-color', requireAdmin, express.json(), (req, res) => {
 // that canvas's width/height. Works for both dashboard-added combos AND the
 // frontend's static hardcoded combos — this endpoint doesn't care where the
 // combo's images actually live, it just keys positions by type|style|color.
-app.post('/admin/logo-position', requireAdmin, express.json(), (req, res) => {
+app.post('/admin/logo-position', requireAdmin, express.json(), ah(async (req, res) => {
     const { type, style, color, mockup, die } = req.body || {};
     if (!type || !style || !color) {
         return res.status(400).json({ error: 'type, style and color are required.' });
@@ -169,22 +181,22 @@ app.post('/admin/logo-position', requireAdmin, express.json(), (req, res) => {
     }
 
     const key = `${type}|${style}|${color}`;
-    const catalog = catalogStore.readCatalog();
+    const catalog = await catalogStore.readCatalog();
     const existing = catalog.logoPositions[key] || {};
     catalog.logoPositions[key] = {
         mockup: mockup ? { x: mockup.x, y: mockup.y } : existing.mockup,
         die: die ? { x: die.x, y: die.y } : existing.die,
     };
-    catalogStore.writeCatalog(catalog);
+    await catalogStore.writeCatalog(catalog);
     res.json(catalog);
-});
+}));
 
-app.delete('/admin/printing-color/:key', requireAdmin, (req, res) => {
-    const catalog = catalogStore.readCatalog();
+app.delete('/admin/printing-color/:key', requireAdmin, ah(async (req, res) => {
+    const catalog = await catalogStore.readCatalog();
     delete catalog.printingColors[req.params.key];
-    catalogStore.writeCatalog(catalog);
+    await catalogStore.writeCatalog(catalog);
     res.json(catalog);
-});
+}));
 
 // Create (or replace) a box type/style/color combo: saves the two uploaded images
 // and registers the combo + dimensions so the customer form can offer it.
@@ -192,7 +204,7 @@ app.post(
     '/admin/mockup',
     requireAdmin,
     upload.fields([{ name: 'mockupImage', maxCount: 1 }, { name: 'dieImage', maxCount: 1 }]),
-    (req, res) => {
+    async (req, res) => {
         const { typeLabel, styleLabel, colorLabel, dimensions } = req.body || {};
         const mockupFile = req.files && req.files.mockupImage && req.files.mockupImage[0];
         const dieFile = req.files && req.files.dieImage && req.files.dieImage[0];
@@ -212,11 +224,10 @@ app.post(
         const color = slugify(colorLabel);
 
         try {
-            fs.mkdirSync(catalogStore.comboDir(type, style, color), { recursive: true });
-            fs.writeFileSync(catalogStore.comboImagePath(type, style, color, 'mockup'), mockupFile.buffer);
-            fs.writeFileSync(catalogStore.comboImagePath(type, style, color, 'die'), dieFile.buffer);
+            await catalogStore.putFile(catalogStore.comboKey(type, style, color, 'mockup'), mockupFile.buffer);
+            await catalogStore.putFile(catalogStore.comboKey(type, style, color, 'die'), dieFile.buffer);
 
-            const catalog = catalogStore.readCatalog();
+            const catalog = await catalogStore.readCatalog();
             catalog.types[type] = { label: String(typeLabel).trim() };
             catalog.styles[style] = { label: String(styleLabel).trim() };
             catalog.colors[color] = { label: String(colorLabel).trim() };
@@ -227,7 +238,7 @@ app.post(
             } else {
                 catalog.combos.push({ type, style, color, dimensions: dimensions || '' });
             }
-            catalogStore.writeCatalog(catalog);
+            await catalogStore.writeCatalog(catalog);
             res.json(catalog);
         } catch (err) {
             console.error('Failed to save mockup combo:', err);
@@ -238,19 +249,19 @@ app.post(
 
 // Removes a dashboard-added combo and its images (mistakes/test entries), plus
 // any type/style/color label left with no remaining combo using it.
-app.delete('/admin/mockup/:type/:style/:color', requireAdmin, (req, res) => {
+app.delete('/admin/mockup/:type/:style/:color', requireAdmin, ah(async (req, res) => {
     const { type, style, color } = req.params;
-    const catalog = catalogStore.readCatalog();
+    const catalog = await catalogStore.readCatalog();
     catalog.combos = catalog.combos.filter((c) => !(c.type === type && c.style === style && c.color === color));
 
     if (!catalog.combos.some((c) => c.type === type)) delete catalog.types[type];
     if (!catalog.combos.some((c) => c.style === style)) delete catalog.styles[style];
     if (!catalog.combos.some((c) => c.color === color)) delete catalog.colors[color];
 
-    catalogStore.writeCatalog(catalog);
-    fs.rmSync(catalogStore.comboDir(type, style, color), { recursive: true, force: true });
+    await catalogStore.writeCatalog(catalog);
+    await catalogStore.deletePrefix(catalogStore.comboPrefix(type, style, color));
     res.json(catalog);
-});
+}));
 
 // POST /remove-bg  (multipart/form-data, field name "logo")
 // Returns the cutout as a PNG with transparent background.
@@ -1092,10 +1103,10 @@ function templateId(style, type, size) {
     return [slugify(style), slugify(type), slugify(size)].filter(Boolean).join('-') || 'template';
 }
 
-app.get('/box-templates', (req, res) => {
-    const catalog = catalogStore.readCatalog();
+app.get('/box-templates', ah(async (req, res) => {
+    const catalog = await catalogStore.readCatalog();
     res.json({ templates: catalog.boxTemplates || [] });
-});
+}));
 
 // Samples the colour a die-line is actually printed in, so the swatch shown in
 // the picker is taken from the artwork rather than from a name someone typed.
@@ -1124,8 +1135,8 @@ async function sampleArtworkColour(buffer) {
     return '#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('');
 }
 
-app.get('/box-template-image/:id', (req, res) => {
-    const catalog = catalogStore.readCatalog();
+app.get('/box-template-image/:id', ah(async (req, res) => {
+    const catalog = await catalogStore.readCatalog();
     const tpl = (catalog.boxTemplates || []).find((t) => t.id === req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Template not found.' });
 
@@ -1133,19 +1144,11 @@ app.get('/box-template-image/:id', (req, res) => {
     const wanted = String(req.query.color || '').trim();
     if (wanted && tpl.colors && tpl.colors[wanted]) {
         const v = tpl.colors[wanted];
-        const colourPath = catalogStore.templateColorPath(tpl.id, wanted, v.ext);
-        if (colourPath.startsWith(catalogStore.TEMPLATES_DIR) && fs.existsSync(colourPath)) {
-            return res.sendFile(colourPath);
-        }
-        return res.status(404).json({ error: 'That colour is not stored for this template.' });
+        return sendStored(res, catalogStore.templateColorKey(tpl.id, wanted, v.ext), 'That colour is not stored for this template.');
     }
 
-    const filePath = catalogStore.templateImagePath(tpl.id, tpl.ext);
-    if (!filePath.startsWith(catalogStore.TEMPLATES_DIR) || !fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Template image not found.' });
-    }
-    res.sendFile(filePath);
-});
+    await sendStored(res, catalogStore.templateKey(tpl.id, tpl.ext), 'Template image not found.');
+}));
 
 app.post('/admin/box-template', requireAdmin, upload.single('template'), async (req, res) => {
     if (!req.file) {
@@ -1219,16 +1222,14 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
             }
         }
 
-        fs.mkdirSync(catalogStore.TEMPLATES_DIR, { recursive: true });
         // Remove any previous file for this id whose extension differs, or the
         // old one would linger and be served instead.
         for (const old of ['png', 'jpg', 'webp', 'svg']) {
-            const p = catalogStore.templateImagePath(id, old);
-            if (old !== ext && fs.existsSync(p)) fs.unlinkSync(p);
+            if (old !== ext) await catalogStore.deleteFile(catalogStore.templateKey(id, old));
         }
-        fs.writeFileSync(catalogStore.templateImagePath(id, ext), req.file.buffer);
+        await catalogStore.putFile(catalogStore.templateKey(id, ext), req.file.buffer);
 
-        const catalog = catalogStore.readCatalog();
+        const catalog = await catalogStore.readCatalog();
         catalog.boxTemplates = catalog.boxTemplates || [];
         const entry = {
             id,
@@ -1246,7 +1247,7 @@ app.post('/admin/box-template', requireAdmin, upload.single('template'), async (
         const idx = catalog.boxTemplates.findIndex((t) => t.id === id);
         if (idx >= 0) catalog.boxTemplates[idx] = { ...catalog.boxTemplates[idx], ...entry };
         else catalog.boxTemplates.push(entry);
-        catalogStore.writeCatalog(catalog);
+        await catalogStore.writeCatalog(catalog);
 
         res.json({ template: entry, templates: catalog.boxTemplates, readError });
     } catch (err) {
@@ -1308,14 +1309,12 @@ app.post('/admin/box-template-color', requireAdmin, upload.single('template'), a
             }
         }
 
-        fs.mkdirSync(catalogStore.templateColorDir(id), { recursive: true });
         for (const old of ['png', 'jpg', 'webp', 'svg']) {
-            const prev = catalogStore.templateColorPath(id, colorSlug, old);
-            if (old !== ext && fs.existsSync(prev)) fs.unlinkSync(prev);
+            if (old !== ext) await catalogStore.deleteFile(catalogStore.templateColorKey(id, colorSlug, old));
         }
-        fs.writeFileSync(catalogStore.templateColorPath(id, colorSlug, ext), req.file.buffer);
+        await catalogStore.putFile(catalogStore.templateColorKey(id, colorSlug, ext), req.file.buffer);
 
-        const catalog = catalogStore.readCatalog();
+        const catalog = await catalogStore.readCatalog();
         catalog.boxTemplates = catalog.boxTemplates || [];
         let tpl = catalog.boxTemplates.find((t) => t.id === id);
         const dims = aiEnhance.parseBoxSize(sizeLabel);
@@ -1336,7 +1335,7 @@ app.post('/admin/box-template-color', requireAdmin, upload.single('template'), a
         // Keep the template's own dimensions in step with the artwork it holds.
         tpl.pixelWidth = tpl.pixelWidth || pixelWidth;
         tpl.pixelHeight = tpl.pixelHeight || pixelHeight;
-        catalogStore.writeCatalog(catalog);
+        await catalogStore.writeCatalog(catalog);
 
         res.json({ template: tpl, colorSlug });
     } catch (err) {
@@ -1351,12 +1350,12 @@ app.post('/admin/box-template-color', requireAdmin, upload.single('template'), a
 // by re-uploading would mean re-sending a hundred and eighty-nine files to land
 // them under a new id. The id stays as it is and only what the picker shows,
 // and the dimensions read off the size, change.
-app.post('/admin/box-template-labels', requireAdmin, express.json(), (req, res) => {
+app.post('/admin/box-template-labels', requireAdmin, express.json(), ah(async (req, res) => {
     const body = req.body || {};
     const id = String(body.id || '').trim();
     if (!id) return res.status(400).json({ error: 'id is required.' });
 
-    const catalog = catalogStore.readCatalog();
+    const catalog = await catalogStore.readCatalog();
     catalog.boxTemplates = catalog.boxTemplates || [];
     const tpl = catalog.boxTemplates.find((t) => t.id === id);
     if (!tpl) return res.status(404).json({ error: 'No template with that id.' });
@@ -1372,30 +1371,26 @@ app.post('/admin/box-template-labels', requireAdmin, express.json(), (req, res) 
     tpl.width = dims ? dims.width : null;
     tpl.height = dims ? dims.height : null;
 
-    catalogStore.writeCatalog(catalog);
+    await catalogStore.writeCatalog(catalog);
     res.json({ template: tpl });
-});
+}));
 
-app.delete('/admin/box-template/:id', requireAdmin, (req, res) => {
-    const catalog = catalogStore.readCatalog();
+app.delete('/admin/box-template/:id', requireAdmin, ah(async (req, res) => {
+    const catalog = await catalogStore.readCatalog();
     catalog.boxTemplates = catalog.boxTemplates || [];
     const tpl = catalog.boxTemplates.find((t) => t.id === req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Template not found.' });
     try {
-        const filePath = catalogStore.templateImagePath(tpl.id, tpl.ext);
-        if (filePath.startsWith(catalogStore.TEMPLATES_DIR) && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        const colourDir = catalogStore.templateColorDir(tpl.id);
-        if (colourDir.startsWith(catalogStore.TEMPLATES_DIR) && fs.existsSync(colourDir)) {
-            fs.rmSync(colourDir, { recursive: true, force: true });
-        }
+        await catalogStore.deleteFile(catalogStore.templateKey(tpl.id, tpl.ext));
+        await catalogStore.deletePrefix(catalogStore.templateColorPrefix(tpl.id));
         catalog.boxTemplates = catalog.boxTemplates.filter((t) => t.id !== req.params.id);
-        catalogStore.writeCatalog(catalog);
+        await catalogStore.writeCatalog(catalog);
         res.json({ templates: catalog.boxTemplates });
     } catch (err) {
         console.error('Failed to delete box template:', err);
         res.status(500).json({ error: 'Failed to delete the template.', detail: err.message });
     }
-});
+}));
 
 // ── Mockup tab: vector export ────────────────────────────────────────────────
 // The on-screen mockup is a bitmap: a recoloured die-line with a logo composited
@@ -1568,7 +1563,108 @@ app.post('/api/mockup/svg', requireAdmin, upload.fields([
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`mockupdibiaa-backend listening on port ${PORT}`);
+// ── One-time import from another deployment ───────────────────────────────────
+//
+// Copies the catalog and every stored image from a running deployment of this
+// same backend (for instance the Railway one) into this one's storage, through
+// that deployment's public read routes. It runs here, on the new host, so the
+// database only ever needs to accept connections from its own server.
+// Started by POST, followed by GET; the copy runs in the background because a
+// couple of hundred images outlast a proxy's request timeout.
+let importJob = null;
+
+async function runImport(source) {
+    const job = importJob;
+    const get = async (pathname) => {
+        const r = await fetch(source + pathname);
+        if (!r.ok) {
+            const err = new Error(`${pathname} returned ${r.status}`);
+            err.status = r.status;
+            throw err;
+        }
+        return r;
+    };
+    const copy = async (pathname, key) => {
+        try {
+            const buf = Buffer.from(await (await get(pathname)).arrayBuffer());
+            await catalogStore.putFile(key, buf);
+            job.copied++;
+            job.bytes += buf.length;
+        } catch (err) {
+            // Absent at the source is not a failure: a template built only from
+            // printed colour artwork has no base image there either.
+            if (err.status === 404) job.absentAtSource.push(key);
+            else job.failed.push(`${key}: ${err.message}`);
+        }
+        job.done++;
+    };
+    const catalog = await (await get('/catalog')).json();
+    const tasks = [];
+    for (const tpl of catalog.boxTemplates || []) {
+        const id = encodeURIComponent(tpl.id);
+        tasks.push(() => copy(`/box-template-image/${id}`, catalogStore.templateKey(tpl.id, tpl.ext)));
+        for (const [slug, v] of Object.entries(tpl.colors || {})) {
+            tasks.push(() => copy(`/box-template-image/${id}?color=${encodeURIComponent(slug)}`,
+                catalogStore.templateColorKey(tpl.id, slug, v.ext)));
+        }
+    }
+    for (const c of catalog.combos || []) {
+        for (const kind of ['mockup', 'die']) {
+            tasks.push(() => copy(`/images/${c.type}/${c.style}/${c.color}/${kind}`,
+                catalogStore.comboKey(c.type, c.style, c.color, kind)));
+        }
+    }
+    job.total = tasks.length;
+    // A handful at a time: quick, without hammering the source.
+    let next = 0;
+    await Promise.all(Array.from({ length: 6 }, async () => {
+        while (next < tasks.length) await tasks[next++]();
+    }));
+    // The catalog goes in last, so nothing is listed before its images exist.
+    await catalogStore.writeCatalog(catalog);
+    job.templates = (catalog.boxTemplates || []).length;
+}
+
+app.post('/admin/import-from', requireAdmin, express.json(), (req, res) => {
+    const source = String((req.body || {}).source || '').trim().replace(/\/+$/, '');
+    if (!/^https?:\/\/[^\s]+$/.test(source)) {
+        return res.status(400).json({ error: 'source must be the http(s) address of the deployment to copy from.' });
+    }
+    if (importJob && importJob.state === 'running') {
+        return res.status(409).json({ error: 'An import is already running.', job: importJob });
+    }
+    importJob = { state: 'running', source, startedAt: new Date().toISOString(), total: null, done: 0, copied: 0, bytes: 0, failed: [], absentAtSource: [] };
+    runImport(source)
+        .then(() => { importJob.state = importJob.failed.length ? 'finished with failures' : 'finished'; })
+        .catch((err) => { importJob.state = 'failed'; importJob.error = err.message; })
+        .finally(() => { importJob.finishedAt = new Date().toISOString(); });
+    res.status(202).json({ job: importJob });
 });
+
+app.get('/admin/import-from', requireAdmin, (req, res) => {
+    res.json({ storage: catalogStore.describe(), job: importJob });
+});
+
+// Errors from routes registered after the first error handler would otherwise
+// fall through to Express's default HTML page.
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: `Upload rejected: ${err.message}` });
+    }
+    console.error('Unhandled error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Server error.' });
+});
+
+const PORT = process.env.PORT || 3000;
+// Storage first: a database that cannot be reached should stop the service with
+// a clear message, not leave it running and failing on every request.
+catalogStore.init()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`mockupdibiaa-backend listening on port ${PORT} — storage: ${catalogStore.describe()}`);
+        });
+    })
+    .catch((err) => {
+        console.error(`Storage could not be opened (${catalogStore.describe()}): ${err.message}`);
+        process.exit(1);
+    });
