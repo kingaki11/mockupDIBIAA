@@ -8,6 +8,7 @@
   },
   "scripts": {
     "postinstall": "npm install --prefix backend --omit=dev --no-audit --no-fund",
+    "build": "echo \"No build step: the site is static files served by backend/server.js\"",
     "start": "node backend/server.js"
   }
 }
